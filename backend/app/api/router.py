@@ -2,9 +2,11 @@ import hashlib
 import csv
 import io
 import json
+import re
 import uuid
+from collections import Counter
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -15,9 +17,9 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import current_user, require_roles
 from app.api.schemas import (
-    AssignmentCreate, ChapterCreate, CourseCreate, CourseManagerAdd, CourseOut,
+    AssignmentCreate, AssignmentMaterialGenerate, ChapterCreate, CourseCreate, CourseManagerAdd, CourseOut,
     JoinRequestCreate, JoinRequestReview, KnowledgePointCreate, LessonGenerateRequest,
-    LoginRequest, ParentLinkCreate, PasswordChange, ProfileUpdate, QAMessageCreate,
+    LoginRequest, ParentLinkCreate, PasswordChange, ProfileUpdate, QAAnswerCorrection, QAMessageCreate,
     QASessionCreate, QuestionCreate, RegisterRequest, ReportGenerateRequest,
     ReportReviewRequest, ReviewRequest, SearchRequest, SubmissionCreate, TokenResponse,
     UserCreate, UserOut,
@@ -30,11 +32,11 @@ from app.integrations.ollama import OllamaClient
 from app.modules.models import (
     Assignment, Chapter, ClassGroup, ClassMember, Course, CourseJoinRequest,
     CourseManager, CourseMember, Document, DocumentChunk, GradingResult, KnowledgePoint,
-    LearningPath, LessonResource, MasterySnapshot, ParentStudentLink, QAMessage,
+    LearningPath, LessonResource, MasterySnapshot, Notification, ParentStudentLink, QAMessage,
     QASession, Question, Report, Status, Submission, User,
 )
 from app.rag.service import KnowledgeService
-from app.services.agents import generate_lesson, grade_subjective
+from app.services.agents import generate_assignment_materials, generate_lesson, grade_subjective
 from app.services.documents import extract_text, read_upload
 
 router = APIRouter()
@@ -71,11 +73,24 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
         raise AppError("USERNAME_EXISTS", "用户名已存在", 409)
     if data.email and db.scalar(select(User.id).where(User.email == data.email)):
         raise AppError("EMAIL_EXISTS", "邮箱已被使用", 409)
+    linked_students = []
+    if data.role == "parent":
+        usernames = {value.strip() for value in data.student_usernames if value.strip()}
+        if not usernames:
+            raise AppError("PARENT_STUDENT_REQUIRED", "注册家长账号必须绑定至少一个学生用户名", 422)
+        linked_students = list(db.scalars(select(User).where(User.username.in_(usernames), User.role == "student", User.is_active.is_(True))))
+        if len(linked_students) != len(usernames):
+            found = {item.username for item in linked_students}
+            missing = sorted(usernames - found)
+            raise AppError("STUDENT_NOT_FOUND", "部分学生账号不存在", 422, {"usernames": missing})
     user = User(
         username=data.username, email=data.email, display_name=data.display_name,
-        role="student", password_hash=hash_password(data.password),
+        role=data.role, password_hash=hash_password(data.password),
     )
-    db.add(user); db.commit(); db.refresh(user)
+    db.add(user); db.flush()
+    for student in linked_students:
+        db.add(ParentStudentLink(parent_id=user.id, student_id=student.id, status="active"))
+    db.commit(); db.refresh(user)
     return user
 
 
@@ -139,17 +154,28 @@ def create_parent_link(data: ParentLinkCreate, db: Session = Depends(get_db), _:
 @router.get("/courses", response_model=list[CourseOut], tags=["courses"])
 def list_courses(db: Session = Depends(get_db), user: User = Depends(current_user)):
     stmt = select(Course).order_by(Course.id.desc())
-    if user.role == "teacher":
-        managed = select(CourseManager.course_id).where(CourseManager.user_id == user.id)
-        stmt = stmt.where(Course.id.in_(managed))
-    elif user.role == "student":
+    if user.role == "student":
         enrolled = select(CourseMember.course_id).where(
             CourseMember.student_id == user.id, CourseMember.status == "active"
         )
         stmt = stmt.where(Course.id.in_(enrolled))
     elif user.role == "parent":
         stmt = stmt.where(False)
-    return list(db.scalars(stmt))
+    courses = list(db.scalars(stmt))
+    managed_ids = set()
+    if user.role == "teacher":
+        managed_ids = set(db.scalars(select(CourseManager.course_id).where(CourseManager.user_id == user.id)))
+    elif user.role == "admin":
+        managed_ids = {course.id for course in courses}
+    return [CourseOut.model_validate(course).model_copy(update={"is_manager": course.id in managed_ids}) for course in courses]
+
+
+@router.get("/courses/managed", response_model=list[CourseOut], tags=["courses"])
+def list_managed_courses(db: Session = Depends(get_db), user: User = Depends(require_roles("teacher", "admin"))):
+    stmt = select(Course).order_by(Course.name)
+    if user.role == "teacher":
+        stmt = stmt.where(Course.id.in_(select(CourseManager.course_id).where(CourseManager.user_id == user.id)))
+    return [CourseOut.model_validate(course).model_copy(update={"is_manager": True}) for course in db.scalars(stmt)]
 
 
 @router.post("/courses", response_model=CourseOut, tags=["courses"])
@@ -264,8 +290,6 @@ def visible_course(db: Session, course_id: int, user: User) -> Course:
     course = db.get(Course, course_id)
     if not course:
         raise NotFoundError("课程")
-    if user.role == "teacher" and not db.scalar(select(CourseManager.id).where(CourseManager.course_id == course_id, CourseManager.user_id == user.id)):
-        raise PermissionDeniedError("你不是该课程负责人")
     if user.role == "student" and not db.scalar(select(CourseMember.id).where(CourseMember.course_id == course_id, CourseMember.student_id == user.id, CourseMember.status == "active")):
         raise PermissionDeniedError("你尚未加入该课程")
     if user.role == "parent":
@@ -607,12 +631,42 @@ def get_assignment(assignment_id: int, db: Session = Depends(get_db), user: User
         item = {
             "id": question.id, "question_type": question.question_type, "stem": question.stem,
             "options": question.options_json, "max_score": question.max_score,
-            "sort_order": question.sort_order,
+            "sort_order": question.sort_order, "material_type": question.material_type,
         }
         if user.role in {"teacher", "admin"}:
             item.update({"standard_answer": question.standard_answer, "rubric": question.rubric_json, "knowledge_point_ids": question.knowledge_point_ids_json})
         question_items.append(item)
     return {**assignment_summary(db, assignment, course, user), "questions": question_items}
+
+
+@router.post("/assignments/{assignment_id}/generate-materials", tags=["assignment"])
+async def generate_assignment_content(assignment_id: int, data: AssignmentMaterialGenerate, db: Session = Depends(get_db), user: User = Depends(require_roles("teacher", "admin"))):
+    assignment = db.get(Assignment, assignment_id)
+    if not assignment:
+        raise NotFoundError("作业")
+    owned_course(db, assignment.course_id, user)
+    if assignment.status != Status.draft:
+        raise AppError("ASSIGNMENT_NOT_DRAFT", "只有草稿作业可以自动添加材料", 409)
+    document = db.get(Document, data.document_id)
+    if not document or document.course_id != assignment.course_id or document.status != Status.ready:
+        raise AppError("DOCUMENT_NOT_AVAILABLE", "请选择该课程中已完成入库的文件", 422)
+    chunks = list(db.scalars(select(DocumentChunk).where(DocumentChunk.document_id == document.id).order_by(DocumentChunk.chunk_index)))
+    materials = await generate_assignment_materials(document, chunks, data)
+    start_order = db.scalar(select(func.max(Question.sort_order)).where(Question.assignment_id == assignment.id)) or 0
+    created = []
+    for index, material in enumerate(materials, start=1):
+        question = Question(
+            assignment_id=assignment.id, question_type=material["question_type"],
+            stem=material["stem"], standard_answer=material["standard_answer"],
+            options_json=material.get("options"), rubric_json=None, knowledge_point_ids_json=[],
+            material_type=material["material_type"], max_score=Decimal(str(material["max_score"])),
+            sort_order=start_order + index,
+        )
+        assignment.total_score = Decimal(assignment.total_score) + question.max_score
+        db.add(question); db.flush()
+        created.append({"id": question.id, **material})
+    db.commit()
+    return {"assignment_id": assignment.id, "document_id": document.id, "document_name": document.filename, "created": len(created), "items": created}
 
 
 @router.get("/assignments/{assignment_id}/submissions", tags=["grading"])
@@ -761,10 +815,31 @@ def review_grade(result_id: int, data: ReviewRequest, db: Session = Depends(get_
 
 @router.post("/qa/sessions", tags=["qa"])
 def create_qa_session(data: QASessionCreate, db: Session = Depends(get_db), user: User = Depends(current_user)):
-    visible_course(db, data.course_id, user)
+    if user.role in {"teacher", "admin"}:
+        owned_course(db, data.course_id, user)
+    else:
+        visible_course(db, data.course_id, user)
     item = QASession(course_id=data.course_id, user_id=user.id, title=data.title)
     db.add(item); db.commit(); db.refresh(item)
     return {"id": item.id, "title": item.title}
+
+
+@router.get("/qa/sessions", tags=["qa"])
+def list_qa_sessions(course_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    visible_course(db, course_id, user)
+    items = list(db.scalars(select(QASession).where(QASession.course_id == course_id, QASession.user_id == user.id).order_by(QASession.updated_at.desc()).limit(30)))
+    return [{"id": item.id, "title": item.title, "updated_at": item.updated_at} for item in items]
+
+
+@router.get("/qa/sessions/{session_id}/messages", tags=["qa"])
+def list_qa_messages(session_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    session = db.get(QASession, session_id)
+    if not session or session.user_id != user.id:
+        raise NotFoundError("问答会话")
+    items = list(db.scalars(select(QAMessage).where(QAMessage.session_id == session_id).order_by(QAMessage.id)))
+    return [{"id": item.id, "role": item.role, "content": item.content, "citations": item.citations_json,
+             "confidence": item.confidence, "insufficient": item.needs_teacher, "corrected_at": item.corrected_at,
+             "correction_note": item.correction_note, "created_at": item.created_at} for item in items]
 
 
 @router.post("/qa/sessions/{session_id}/messages", tags=["qa"])
@@ -787,11 +862,176 @@ async def ask(session_id: int, data: QAMessageCreate, db: Session = Depends(get_
     }
 
 
+@router.get("/courses/{course_id}/qa-review", tags=["qa"])
+def course_qa_review(course_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("teacher", "admin"))):
+    owned_course(db, course_id, user)
+    sessions = list(db.scalars(select(QASession).where(QASession.course_id == course_id).order_by(QASession.updated_at.desc())))
+    output = []
+    for session in sessions:
+        student = db.get(User, session.user_id)
+        messages = list(db.scalars(select(QAMessage).where(QAMessage.session_id == session.id).order_by(QAMessage.id)))
+        for index, message in enumerate(messages):
+            if message.role != "user":
+                continue
+            answer = next((item for item in messages[index + 1:] if item.role == "assistant"), None)
+            output.append({
+                "session_id": session.id, "session_title": session.title,
+                "student_id": student.id if student else None,
+                "student_name": student.display_name if student else "未知用户",
+                "question_id": message.id, "question": message.content, "asked_at": message.created_at,
+                "answer_id": answer.id if answer else None, "answer": answer.content if answer else None,
+                "confidence": answer.confidence if answer else None,
+                "needs_teacher": answer.needs_teacher if answer else True,
+                "corrected_at": answer.corrected_at if answer else None,
+                "correction_note": answer.correction_note if answer else None,
+            })
+    return output
+
+
+@router.patch("/qa/messages/{message_id}/correct", tags=["qa"])
+def correct_qa_answer(message_id: int, data: QAAnswerCorrection, db: Session = Depends(get_db), user: User = Depends(require_roles("teacher", "admin"))):
+    message = db.get(QAMessage, message_id)
+    if not message or message.role != "assistant":
+        raise NotFoundError("AI 回答")
+    session = db.get(QASession, message.session_id)
+    owned_course(db, session.course_id, user)
+    if message.original_content is None:
+        message.original_content = message.content
+    message.content = data.content; message.correction_note = data.note
+    message.corrected_by = user.id; message.corrected_at = datetime.utcnow(); message.needs_teacher = False
+    db.add(Notification(
+        user_id=session.user_id, notification_type="qa_correction",
+        title="教师修正了课堂答疑回答",
+        content=data.note or "你的一条课堂提问已由教师审核并修正，请重新查看。",
+        link="/chat", notification_key=f"qa-correction-{message.id}-{uuid.uuid4().hex[:12]}",
+    ))
+    db.commit()
+    return {"id": message.id, "content": message.content, "corrected_at": message.corrected_at}
+
+
+def _topic_key(value: str) -> str:
+    return re.sub(r"\s+", "", value.strip().lower())[:100]
+
+
+@router.get("/courses/{course_id}/high-frequency", tags=["qa"])
+def high_frequency_topics(course_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("teacher", "admin"))):
+    owned_course(db, course_id, user)
+    questions = list(db.scalars(
+        select(QAMessage.content).join(QASession, QASession.id == QAMessage.session_id)
+        .where(QASession.course_id == course_id, QAMessage.role == "user")
+    ))
+    question_counts = Counter(_topic_key(value) for value in questions if value.strip())
+    wrong_rows = db.execute(
+        select(GradingResult, Question).join(Question, Question.id == GradingResult.question_id)
+        .join(Assignment, Assignment.id == Question.assignment_id)
+        .where(Assignment.course_id == course_id)
+    ).all()
+    wrong_counts = Counter()
+    for result, question in wrong_rows:
+        score = result.final_score if result.final_score is not None else result.ai_score if result.ai_score is not None else result.rule_score
+        if score is not None and float(score) < float(question.max_score) * .6:
+            wrong_counts[question.stem[:120]] += 1
+    return {
+        "course_id": course_id,
+        "student_questions": [{"topic": key, "count": count} for key, count in question_counts.most_common(10)],
+        "wrong_answer_topics": [{"topic": key, "count": count} for key, count in wrong_counts.most_common(10)],
+        "focus": [key for key, _ in (question_counts + wrong_counts).most_common(8)],
+    }
+
+
+def create_due_notifications(db: Session, user: User) -> None:
+    if user.role != "student":
+        return
+    now = datetime.utcnow(); deadline = now + timedelta(hours=48)
+    course_ids = select(CourseMember.course_id).where(CourseMember.student_id == user.id, CourseMember.status == "active")
+    submitted_ids = select(Submission.assignment_id).where(Submission.student_id == user.id)
+    assignments = list(db.scalars(select(Assignment).where(
+        Assignment.course_id.in_(course_ids), Assignment.status == Status.published,
+        Assignment.due_at.is_not(None), Assignment.due_at >= now, Assignment.due_at <= deadline,
+        Assignment.id.not_in(submitted_ids),
+    )))
+    changed = False
+    for assignment in assignments:
+        key = f"assignment-due-{assignment.id}-{user.id}"
+        if not db.scalar(select(Notification.id).where(Notification.notification_key == key)):
+            db.add(Notification(
+                user_id=user.id, notification_type="assignment_due", title="作业即将截止",
+                content=f"《{assignment.title}》将在 {assignment.due_at.strftime('%m月%d日 %H:%M')} 截止，请及时完成。",
+                link=f"/assignments", notification_key=key,
+            )); changed = True
+    if changed:
+        db.commit()
+
+
+@router.get("/notifications", tags=["notifications"])
+def list_notifications(unread_only: bool = False, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    create_due_notifications(db, user)
+    stmt = select(Notification).where(Notification.user_id == user.id)
+    if unread_only:
+        stmt = stmt.where(Notification.read_at.is_(None))
+    items = list(db.scalars(stmt.order_by(Notification.created_at.desc()).limit(100)))
+    return [{
+        "id": item.id, "type": item.notification_type, "title": item.title,
+        "content": item.content, "link": item.link, "read": item.read_at is not None,
+        "created_at": item.created_at,
+    } for item in items]
+
+
+@router.patch("/notifications/{notification_id}/read", tags=["notifications"])
+def read_notification(notification_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    item = db.scalar(select(Notification).where(Notification.id == notification_id, Notification.user_id == user.id))
+    if not item:
+        raise NotFoundError("通知")
+    item.read_at = datetime.utcnow(); db.commit()
+    return {"id": item.id, "read": True}
+
+
 @router.get("/students/{student_id}/mastery", tags=["analytics"])
 def mastery(student_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
     if user.role == "student" and user.id != student_id: raise PermissionDeniedError()
     rows = list(db.scalars(select(MasterySnapshot).where(MasterySnapshot.student_id == student_id).order_by(MasterySnapshot.created_at.desc())))
     return [{"knowledge_point_id": x.knowledge_point_id, "score": x.score, "level": x.level, "evidence_count": x.evidence_count} for x in rows]
+
+
+@router.get("/students/{student_id}/weak-profile", tags=["analytics"])
+def weak_profile(student_id: int, course_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    if user.role == "student" and user.id != student_id:
+        raise PermissionDeniedError()
+    if user.role in {"teacher", "admin"}:
+        owned_course(db, course_id, user)
+    elif user.role == "student":
+        visible_course(db, course_id, user)
+    else:
+        raise PermissionDeniedError()
+    student = db.get(User, student_id)
+    if not student or student.role != "student":
+        raise NotFoundError("学生")
+    rows = db.execute(
+        select(MasterySnapshot, KnowledgePoint)
+        .join(KnowledgePoint, KnowledgePoint.id == MasterySnapshot.knowledge_point_id)
+        .where(MasterySnapshot.student_id == student_id, KnowledgePoint.course_id == course_id)
+        .order_by(MasterySnapshot.created_at.desc())
+    ).all()
+    latest = {}
+    for snapshot, point in rows:
+        latest.setdefault(point.id, (snapshot, point))
+    weak = []
+    service = KnowledgeService(db)
+    for snapshot, point in latest.values():
+        if snapshot.score >= .8:
+            continue
+        recommendations = service.keyword_search(course_id, point.name, 3)
+        weak.append({
+            "knowledge_point_id": point.id, "name": point.name, "description": point.description,
+            "score": snapshot.score, "level": snapshot.level,
+            "recommendations": [{"chunk_id": item.chunk_id, "filename": item.filename, "content_preview": item.content[:240]} for item in recommendations],
+        })
+    weak.sort(key=lambda item: item["score"])
+    return {
+        "student": {"id": student.id, "display_name": student.display_name},
+        "course_id": course_id, "weak_count": len(weak), "weak_points": weak,
+        "summary": "当前没有明显薄弱知识点" if not weak else f"发现 {len(weak)} 个需要优先巩固的知识点",
+    }
 
 
 @router.post("/students/{student_id}/learning-paths/generate", tags=["analytics"])
@@ -812,9 +1052,14 @@ def generate_learning_path(student_id: int, course_id: int, db: Session = Depend
 
 @router.post("/reports/generate", tags=["reports"])
 async def generate_report(data: ReportGenerateRequest, db: Session = Depends(get_db), user: User = Depends(require_roles("teacher", "admin"))):
+    owned_course(db, data.course_id, user)
     snapshots = list(db.scalars(select(MasterySnapshot).where(MasterySnapshot.student_id == data.student_id)))
     metrics = {"knowledge_points": len(snapshots), "average_mastery": round(sum(x.score for x in snapshots) / len(snapshots), 3) if snapshots else 0, "weak_points": [x.knowledge_point_id for x in snapshots if x.score < .6]}
-    raw = await OllamaClient().chat("你是学习报告助手，只能解释给出的指标，不得编造数据。", "请返回JSON，包含summary、progress、weaknesses、suggestions。指标：" + json.dumps(metrics, ensure_ascii=False), True)
+    raw = await OllamaClient().chat(
+        "你是面向家长的学习沟通助手。只能解释给出的指标，不得编造数据；避免教育术语，语气客观、温和、可行动。",
+        "请返回JSON对象，字段必须为：overview（本阶段一句话概况）、highlights（进步亮点数组）、needs_attention（需要关注的方面数组）、action_plan（家长可以在家配合的具体行动数组）、encouragement（给孩子的鼓励）、metrics_explanation（用通俗语言解释数据）。指标：" + json.dumps(metrics, ensure_ascii=False),
+        True,
+    )
     try: content = json.loads(raw)
     except json.JSONDecodeError: raise AppError("MODEL_OUTPUT_INVALID", "报告模型输出格式无效", 502)
     report = Report(**data.model_dump(), metrics_json=metrics, content_json=content, status=Status.pending_review)
@@ -839,8 +1084,19 @@ def review_report(report_id: int, data: ReportReviewRequest, db: Session = Depen
     return {"id": report.id, "status": report.status, "comment": data.comment}
 
 
+@router.get("/parent/students", tags=["reports"])
+def parent_students(db: Session = Depends(get_db), user: User = Depends(require_roles("parent"))):
+    rows = db.execute(select(ParentStudentLink, User).join(User, User.id == ParentStudentLink.student_id).where(ParentStudentLink.parent_id == user.id, ParentStudentLink.status == "active").order_by(User.display_name)).all()
+    return [{"id": student.id, "display_name": student.display_name, "username": student.username} for _, student in rows]
+
+
 @router.get("/parent/reports", tags=["reports"])
-def parent_reports(db: Session = Depends(get_db), user: User = Depends(require_roles("parent"))):
+def parent_reports(student_id: int | None = None, db: Session = Depends(get_db), user: User = Depends(require_roles("parent"))):
     student_ids = select(ParentStudentLink.student_id).where(ParentStudentLink.parent_id == user.id, ParentStudentLink.status == "active")
-    reports = list(db.scalars(select(Report).where(Report.student_id.in_(student_ids), Report.status == Status.published).order_by(Report.period_end.desc())))
+    if student_id is not None and not db.scalar(select(ParentStudentLink.id).where(ParentStudentLink.parent_id == user.id, ParentStudentLink.student_id == student_id, ParentStudentLink.status == "active")):
+        raise PermissionDeniedError("该学生未与当前家长账号绑定")
+    stmt = select(Report).where(Report.student_id.in_(student_ids), Report.status == Status.published)
+    if student_id is not None:
+        stmt = stmt.where(Report.student_id == student_id)
+    reports = list(db.scalars(stmt.order_by(Report.period_end.desc())))
     return [{"id": x.id, "student_id": x.student_id, "course_id": x.course_id, "period_type": x.period_type, "metrics": x.metrics_json, "content": x.content_json, "status": x.status} for x in reports]

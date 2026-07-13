@@ -86,6 +86,24 @@ class KnowledgeService:
             for index, (chunk, doc) in enumerate(rows)
         ]
 
+    def course_context(self, course_id: int, top_k: int = 20) -> list[RetrievedChunk]:
+        """Return representative ready chunks when a lesson topic is not a literal text match."""
+        rows = self.db.execute(
+            select(DocumentChunk, Document)
+            .join(Document, Document.id == DocumentChunk.document_id)
+            .where(Document.course_id == course_id, Document.status == "ready")
+            .order_by(Document.id.desc(), DocumentChunk.chunk_index)
+            .limit(top_k)
+        ).all()
+        return [
+            RetrievedChunk(
+                chunk_id=chunk.id, document_id=doc.id, content=chunk.content,
+                filename=doc.filename, chunk_index=chunk.chunk_index,
+                category=doc.category, score=1.0 / (index + 1),
+            )
+            for index, (chunk, doc) in enumerate(rows)
+        ]
+
     async def vector_search(self, course_id: int, query: str, top_k: int = 20) -> list[RetrievedChunk]:
         embedding = (await OllamaClient().embed([query]))[0]
         hits = MilvusIndex().search(embedding, course_id, top_k)

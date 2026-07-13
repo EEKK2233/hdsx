@@ -33,6 +33,8 @@ class RegisterRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
     display_name: str = Field(min_length=1, max_length=100)
     email: str | None = None
+    role: str = Field(default="student", pattern="^(student|teacher|parent)$")
+    student_usernames: list[str] = Field(default_factory=list, max_length=20)
 
 
 class ProfileUpdate(BaseModel):
@@ -71,6 +73,7 @@ class CourseOut(ORMModel):
     description: str | None
     owner_id: int
     status: str
+    is_manager: bool = False
 
 
 class ChapterCreate(BaseModel):
@@ -123,6 +126,15 @@ class AssignmentCreate(BaseModel):
     due_at: datetime | None = None
 
 
+class AssignmentMaterialGenerate(BaseModel):
+    document_id: int
+    chapter_or_topic: str = Field(min_length=1, max_length=300)
+    example_count: int = Field(default=1, ge=0, le=5)
+    exercise_count: int = Field(default=3, ge=0, le=10)
+    thinking_count: int = Field(default=1, ge=0, le=5)
+    extension_count: int = Field(default=1, ge=0, le=5)
+
+
 class QuestionCreate(BaseModel):
     question_type: str = Field(pattern="^(single_choice|multiple_choice|true_false|short_answer|essay)$")
     stem: str
@@ -160,6 +172,11 @@ class QASessionCreate(BaseModel):
 
 class QAMessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
+
+
+class QAAnswerCorrection(BaseModel):
+    content: str = Field(min_length=1, max_length=8000)
+    note: str | None = Field(default=None, max_length=500)
 
 
 class ReportGenerateRequest(BaseModel):

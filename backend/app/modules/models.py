@@ -197,6 +197,7 @@ class Question(Base, TimestampMixin):
     options_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
     rubric_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
     knowledge_point_ids_json: Mapped[list] = mapped_column(JSON, default=list)
+    material_type: Mapped[str] = mapped_column(String(30), default="exercise")
     max_score: Mapped[Decimal] = mapped_column(DECIMAL(7, 2))
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
 
@@ -248,6 +249,22 @@ class QAMessage(Base, TimestampMixin):
     confidence: Mapped[float] = mapped_column(Float, default=0)
     needs_teacher: Mapped[bool] = mapped_column(Boolean, default=False)
     trace_id: Mapped[str] = mapped_column(String(64), index=True)
+    original_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    correction_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    corrected_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    corrected_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class Notification(Base, TimestampMixin):
+    __tablename__ = "notifications"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    notification_type: Mapped[str] = mapped_column(String(50), index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    content: Mapped[str] = mapped_column(String(1000))
+    link: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    notification_key: Mapped[str] = mapped_column(String(180), unique=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
 
 class MasterySnapshot(Base, TimestampMixin):
