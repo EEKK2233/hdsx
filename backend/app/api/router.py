@@ -651,11 +651,12 @@ async def generate_assignment_content(assignment_id: int, data: AssignmentMateri
     owned_course(db, assignment.course_id, user)
     if assignment.status != Status.draft:
         raise AppError("ASSIGNMENT_NOT_DRAFT", "只有草稿作业可以自动添加材料", 409)
-    document = db.get(Document, data.document_id)
-    if not document or document.course_id != assignment.course_id or document.status != Status.ready:
-        raise AppError("DOCUMENT_NOT_AVAILABLE", "请选择该课程中已完成入库的文件", 422)
-    chunks = list(db.scalars(select(DocumentChunk).where(DocumentChunk.document_id == document.id).order_by(DocumentChunk.chunk_index)))
-    materials = await generate_assignment_materials(document, chunks, data)
+    document_ids = list(dict.fromkeys(data.document_ids))
+    documents = list(db.scalars(select(Document).where(Document.id.in_(document_ids))))
+    if len(documents) != len(document_ids) or any(document.course_id != assignment.course_id or document.status != Status.ready for document in documents):
+        raise AppError("DOCUMENT_NOT_AVAILABLE", "所选文件必须全部属于该课程且已完成入库", 422)
+    chunks = list(db.scalars(select(DocumentChunk).where(DocumentChunk.document_id.in_(document_ids)).order_by(DocumentChunk.document_id, DocumentChunk.chunk_index)))
+    materials = await generate_assignment_materials(documents, chunks, data)
     start_order = db.scalar(select(func.max(Question.sort_order)).where(Question.assignment_id == assignment.id)) or 0
     created = []
     for index, material in enumerate(materials, start=1):
@@ -670,7 +671,7 @@ async def generate_assignment_content(assignment_id: int, data: AssignmentMateri
         db.add(question); db.flush()
         created.append({"id": question.id, **material})
     db.commit()
-    return {"assignment_id": assignment.id, "document_id": document.id, "document_name": document.filename, "created": len(created), "items": created}
+    return {"assignment_id": assignment.id, "document_ids": document_ids, "document_names": [document.filename for document in documents], "created": len(created), "items": created}
 
 
 @router.get("/assignments/{assignment_id}/submissions", tags=["grading"])

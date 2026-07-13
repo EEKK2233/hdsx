@@ -28,10 +28,11 @@ async def generate_lesson(db: Session, request) -> tuple[dict, list]:
     knowledge = KnowledgeService(db)
     chunks = knowledge.keyword_search(request.course_id, request.chapter_title, 8)
     if not chunks:
-        chunks = knowledge.course_context(request.course_id, 8)
+        candidates = await knowledge.hybrid_search(request.course_id, request.chapter_title, 8)
+        chunks = [chunk for chunk in candidates if chunk.rerank_score is not None and chunk.rerank_score > 0]
     context = "\n\n".join(f"[资料{i+1}] {c.content}" for i, c in enumerate(chunks))
     if not context:
-        raise AppError("INSUFFICIENT_EVIDENCE", "当前课程知识库没有已完成入库的资料，请先上传文件并确认状态为 ready", 422)
+        raise AppError("INSUFFICIENT_EVIDENCE", "当前课程知识库没有找到与该主题相关的资料，请检查课程、主题名称或上传对应教材", 422)
     format_rules = {
         "lesson_plan": "使用完整教案格式，依次包含：课程信息、教学目标、重点与难点、课前准备、教学过程（每个环节标注分钟数）、课堂互动、示例、练习、课堂总结和课后任务。",
         "lecture": "使用可直接讲授的课堂讲稿格式，包含：开场导入、知识讲解、案例串讲、提问互动、易错提醒、课堂总结；语言自然，避免只列关键词。",
@@ -79,8 +80,18 @@ async def grade_subjective(question, answer: str, knowledge_context: str = "") -
         raise AppError("MODEL_OUTPUT_INVALID", "批改模型输出格式无效", 502) from exc
 
 
-async def generate_assignment_materials(document, chunks, request) -> list[dict]:
-    context = "\n\n".join(chunk.content for chunk in chunks[:12])
+async def generate_assignment_materials(documents, chunks, request) -> list[dict]:
+    documents = documents if isinstance(documents, list) else [documents]
+    filenames = "、".join(document.filename for document in documents)
+    if len(documents) > 1 and all(hasattr(chunk, "document_id") for chunk in chunks):
+        per_document = max(2, 16 // len(documents))
+        selected_chunks = []
+        for document in documents:
+            selected_chunks.extend([chunk for chunk in chunks if chunk.document_id == document.id][:per_document])
+    else:
+        selected_chunks = chunks[:16]
+    filename_map = {getattr(document, "id", None): document.filename for document in documents}
+    context = "\n\n".join(f"[来源：{filename_map.get(getattr(chunk, 'document_id', None), filenames)}]\n{chunk.content}" for chunk in selected_chunks)
     schema = {
         "items": [{
             "material_type": "example|exercise|thinking|extension",
@@ -93,7 +104,7 @@ async def generate_assignment_materials(document, chunks, request) -> list[dict]
 数量要求：课堂例题{request.example_count}，练习题{request.exercise_count}，思考题{request.thinking_count}，拓展材料{request.extension_count}。
 必须严格输出 JSON，结构参考：{json.dumps(schema, ensure_ascii=False)}。
 拓展材料可使用 essay 类型；选择题必须提供 options 和正确选项编号。所有内容必须能从资料推导。
-资料文件：{document.filename}
+资料文件：{filenames}
 资料内容：
 {context}"""
     client = OllamaClient()

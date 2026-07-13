@@ -1,4 +1,5 @@
 from app.api.router import _answer_tokens, normalized_question_options
+from app.api.schemas import AssignmentMaterialGenerate
 from app.services.agents import _load_model_json
 
 
@@ -17,3 +18,8 @@ def test_true_false_options_are_always_available():
         {"key": "true", "content": "正确"},
         {"key": "false", "content": "错误"},
     ]
+
+
+def test_assignment_material_accepts_multiple_documents():
+    request = AssignmentMaterialGenerate(document_ids=[3, 5], chapter_or_topic="第一章")
+    assert request.document_ids == [3, 5]

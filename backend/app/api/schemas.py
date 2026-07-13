@@ -127,7 +127,7 @@ class AssignmentCreate(BaseModel):
 
 
 class AssignmentMaterialGenerate(BaseModel):
-    document_id: int
+    document_ids: list[int] = Field(min_length=1, max_length=10)
     chapter_or_topic: str = Field(min_length=1, max_length=300)
     example_count: int = Field(default=1, ge=0, le=5)
     exercise_count: int = Field(default=3, ge=0, le=10)
