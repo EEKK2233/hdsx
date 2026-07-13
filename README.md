@@ -8,6 +8,8 @@
 
 备课检索采用“整句命中优先、混合检索与 BGE 相关性阈值兜底”，无相关证据时拒绝生成，避免无论主题都引用同一份 Vue 等资料。作业材料生成可同时选择最多 10 份 ready 参考文件，并按文件均衡抽取上下文。
 
+后端已按 `44.md` 补齐并接入 `agents`、`common`、`prompts`、`skills`、`tools`、`mcp` 与分层 RAG 结构。六类 Skill 绑定六个版本化 Prompt；五个只读 Tool 通过白名单注册并复用课程权限；内部 MCP 网关支持版本协商、`ping`、`tools/list`、`tools/call`，远端 MCP 默认关闭并受主机白名单限制。管理员可从“Agent 能力”页面检查当前实际注册的版本、变量、工具和 MCP 状态。
+
 华迪实训小组项目。
 
 本目录是依据仓库根目录 `11.md` 与 `44.md` 实现的项目 MVP。后端采用 FastAPI + MySQL + Milvus，前端采用 Vue 3；本地模型使用 Ollama 的 `qwen2.5:latest` 与 `embeddinggemma:latest`。
@@ -63,6 +65,8 @@ powershell -ExecutionPolicy Bypass -File .\start_production.ps1
 ## 演示范围
 
 已实现身份与课程、文档入库、Milvus 向量召回、MySQL 关键词召回、RRF 融合、BGE 重排、备课、作业批改、教师复核、问答、掌握度、学习路径、家长授权和报告发布，并提供自动化与真实端到端测试。外部服务不可用时会返回明确错误，不会静默切换到 SQLite 或伪造模型结果。
+
+Agent 采用确定性编排：业务服务先通过受控查询获得证据，再由对应 Domain Agent 运行指定 Skill 和 Prompt。模型本身不能选择任意工具、执行 SQL 或绕过课程权限。新增能力应同时增加 Skill manifest、`SKILL.md`、版本化 Prompt、Schema 和测试。
 
 ## 项目文档
 

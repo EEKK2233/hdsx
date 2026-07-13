@@ -1,5 +1,14 @@
 # 项目续接状态
 
+## 2026-07-13 Agent 平台与目录对齐更新
+
+- 已补齐并实际接入 `common`、`agents`、`prompts`、`skills`、`tools`、`mcp` 以及 RAG 子模块，不再把核心提示词和编排全部集中在 `services/agents.py`。
+- 已建立 6 个版本化 Prompt、6 个 Skill 契约、6 个领域 Agent 和 5 个只读白名单 Tool；备课、作业生成、批改、标准答案、答疑、学习报告均通过统一 Runtime。
+- 已实现站内认证 MCP JSON-RPC 安全网关和默认禁用的远端 MCP 客户端；所有 Tool 复用课程/学生数据权限，模型不能执行自由 SQL。
+- RAG 已拆分 loader、cleaner、splitter、embedding、index、fusion、deduplicator、filter、reranker、context builder、citation 和 pipeline。
+- 前端新增公共组件、composable、类型目录和管理员“Agent 能力中心”。
+- 验证：后端 `16 passed`；Vue TypeScript 检查通过；Vite 生产构建 `124 modules transformed`。
+
 ## 2026-07-13 教学闭环产品化更新
 
 已完成页面状态记忆、备课文本与历史预览、多角色注册与家长多学生隔离、课程权限、知识库材料生成、薄弱画像、课堂高频问题、教师答疑修正、站内通知、家长友好报告和聊天式答疑界面。真实 MySQL 已升级到 `0007_classroom_ops`；后端自动化测试通过，Vue TypeScript 检查与生产构建通过。备课按资源类型输出 Markdown 文本，只使用相关性通过的知识证据；作业材料使用 JSON Schema、降级解析并支持最多 10 份参考文件；全局顶部显示当前位置和固定退出入口。
@@ -43,7 +52,7 @@
 
 ## 当前阶段
 
-总体任务状态：**项目 MVP 已完成并通过真实服务端到端验证**。
+总体任务状态：**产品闭环与 Agent 平台第一版已完成并通过自动化及真实服务验证**。
 
 ## 已完成
 
