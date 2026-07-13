@@ -36,7 +36,7 @@ from app.modules.models import (
     QASession, Question, Report, Status, Submission, User,
 )
 from app.rag.service import KnowledgeService
-from app.services.agents import generate_assignment_materials, generate_lesson, grade_subjective
+from app.services.agents import generate_assignment_materials, generate_lesson, generate_standard_answer, grade_subjective
 from app.services.documents import extract_text, read_upload
 
 router = APIRouter()
@@ -147,7 +147,7 @@ def create_parent_link(data: ParentLinkCreate, db: Session = Depends(get_db), _:
     existing = db.scalar(select(ParentStudentLink).where(ParentStudentLink.parent_id == parent.id, ParentStudentLink.student_id == student.id))
     if existing: return {"id": existing.id, "status": existing.status}
     item = ParentStudentLink(parent_id=parent.id, student_id=student.id)
-    db.add(item); db.commit(); db.refresh(item)
+    db.add(item); db.flush()
     return {"id": item.id, "status": item.status}
 
 
@@ -699,6 +699,7 @@ def get_submission(submission_id: int, db: Session = Depends(get_db), user: User
     if user.role == "parent":
         raise PermissionDeniedError()
     results = list(db.scalars(select(GradingResult).where(GradingResult.submission_id == submission.id)))
+    questions = {item.id: item for item in db.scalars(select(Question).where(Question.assignment_id == assignment.id))}
     return {
         "id": submission.id, "assignment_id": assignment.id, "student_id": submission.student_id,
         "answers": submission.answers_json, "submitted_at": submission.submitted_at,
@@ -708,24 +709,55 @@ def get_submission(submission_id: int, db: Session = Depends(get_db), user: User
             "suggested_score": result.rule_score if result.rule_score is not None else result.ai_score,
             "final_score": result.final_score, "confidence": result.confidence,
             "feedback": result.feedback, "evidence": result.evidence_json, "status": result.status,
+            "question": questions[result.question_id].stem, "question_type": questions[result.question_id].question_type,
+            "standard_answer": questions[result.question_id].standard_answer,
         } for result in results],
     }
 
 
+def normalized_question_options(question_type: str, options: list | None) -> list | None:
+    if question_type == "true_false":
+        return [{"key": "true", "content": "正确"}, {"key": "false", "content": "错误"}]
+    return options
+
+
 @router.post("/assignments/{assignment_id}/questions", tags=["assignment"])
-def add_question(assignment_id: int, data: QuestionCreate, db: Session = Depends(get_db), user: User = Depends(require_roles("teacher", "admin"))):
+async def add_question(assignment_id: int, data: QuestionCreate, db: Session = Depends(get_db), user: User = Depends(require_roles("teacher", "admin"))):
     assignment = db.get(Assignment, assignment_id)
     if not assignment: raise NotFoundError("作业")
     owned_course(db, assignment.course_id, user)
+    options = normalized_question_options(data.question_type, data.options)
+    standard_answer = data.standard_answer.strip() or await generate_standard_answer(db, assignment.course_id, data.question_type, data.stem, options)
     question = Question(
         assignment_id=assignment_id, question_type=data.question_type, stem=data.stem,
-        standard_answer=data.standard_answer, options_json=data.options,
+        standard_answer=standard_answer, options_json=options,
         rubric_json=data.rubric, knowledge_point_ids_json=data.knowledge_point_ids,
         max_score=data.max_score, sort_order=data.sort_order,
     )
     assignment.total_score = Decimal(assignment.total_score) + data.max_score
     db.add(question); db.commit(); db.refresh(question)
-    return {"id": question.id, "max_score": question.max_score}
+    return {"id": question.id, "max_score": question.max_score, "standard_answer": question.standard_answer}
+
+
+@router.patch("/questions/{question_id}", tags=["assignment"])
+async def update_question(question_id: int, data: QuestionCreate, db: Session = Depends(get_db), user: User = Depends(require_roles("teacher", "admin"))):
+    question = db.get(Question, question_id)
+    if not question:
+        raise NotFoundError("题目")
+    assignment = db.get(Assignment, question.assignment_id)
+    owned_course(db, assignment.course_id, user)
+    if db.scalar(select(Submission.id).where(Submission.assignment_id == assignment.id)):
+        raise AppError("QUESTION_ALREADY_ANSWERED", "已有学生提交后不能修改题目，以免改变批改依据", 409)
+    options = normalized_question_options(data.question_type, data.options)
+    standard_answer = data.standard_answer.strip() or await generate_standard_answer(db, assignment.course_id, data.question_type, data.stem, options)
+    old_score = Decimal(question.max_score)
+    question.question_type = data.question_type; question.stem = data.stem
+    question.standard_answer = standard_answer; question.options_json = options
+    question.rubric_json = data.rubric; question.knowledge_point_ids_json = data.knowledge_point_ids
+    question.max_score = data.max_score; question.sort_order = data.sort_order
+    assignment.total_score = Decimal(assignment.total_score) - old_score + data.max_score
+    db.commit(); db.refresh(question)
+    return {"id": question.id, "max_score": question.max_score, "standard_answer": question.standard_answer}
 
 
 @router.post("/assignments/{assignment_id}/publish", tags=["assignment"])
@@ -739,8 +771,46 @@ def publish_assignment(assignment_id: int, db: Session = Depends(get_db), user: 
     return {"id": assignment.id, "status": assignment.status}
 
 
+def _answer_tokens(value) -> list[str]:
+    values = value if isinstance(value, list) else re.split(r"[,，、;；\s]+", str(value))
+    return sorted({str(item).strip().lower() for item in values if str(item).strip()})
+
+
+async def _grade_submission(db: Session, submission: Submission, assignment: Assignment) -> dict:
+    if db.scalar(select(GradingResult.id).where(GradingResult.submission_id == submission.id)):
+        raise AppError("ALREADY_GRADED", "该提交已经生成批改结果，请直接查看", 409)
+    questions = list(db.scalars(select(Question).where(Question.assignment_id == assignment.id)))
+    answer_map = {int(x["question_id"]): x.get("answer", "") for x in submission.answers_json}
+    chunks = KnowledgeService(db).course_context(assignment.course_id, 8)
+    knowledge_context = "\n\n".join(chunk.content for chunk in chunks)
+    output, total = [], Decimal("0")
+    for question in questions:
+        raw_answer = answer_map.get(question.id, "")
+        answer = ",".join(str(value) for value in raw_answer) if isinstance(raw_answer, list) else str(raw_answer)
+        if question.question_type in {"single_choice", "multiple_choice", "true_false"}:
+            correct = _answer_tokens(raw_answer) == _answer_tokens(question.standard_answer)
+            result = {"score": float(question.max_score if correct else 0), "confidence": 1.0, "feedback": "回答正确" if correct else "回答错误", "evidence": []}
+            rule_score = Decimal(str(result["score"])); ai_score = None
+        else:
+            result = await grade_subjective(question, answer, knowledge_context)
+            rule_score = None; ai_score = Decimal(str(result["score"]))
+        score = rule_score if rule_score is not None else ai_score
+        total += score or Decimal("0")
+        grading = GradingResult(
+            submission_id=submission.id, question_id=question.id, rule_score=rule_score,
+            ai_score=ai_score, confidence=result["confidence"], feedback=result["feedback"],
+            evidence_json=result.get("evidence", []), status=Status.pending_review,
+        )
+        db.add(grading); db.flush()
+        output.append({"grading_result_id": grading.id, "question_id": question.id,
+                       "standard_answer": question.standard_answer, **result})
+    submission.total_score = total; submission.status = Status.pending_review
+    db.commit()
+    return {"submission_id": submission.id, "suggested_total": total, "results": output, "requires_review": True}
+
+
 @router.post("/assignments/{assignment_id}/submissions", tags=["assignment"])
-def submit_assignment(assignment_id: int, data: SubmissionCreate, db: Session = Depends(get_db), user: User = Depends(require_roles("student"))):
+async def submit_assignment(assignment_id: int, data: SubmissionCreate, db: Session = Depends(get_db), user: User = Depends(require_roles("student"))):
     assignment = db.get(Assignment, assignment_id)
     if not assignment or assignment.status != Status.published: raise AppError("ASSIGNMENT_NOT_AVAILABLE", "作业未发布", 409)
     if db.scalar(select(Submission.id).where(Submission.assignment_id == assignment_id, Submission.student_id == user.id)):
@@ -751,7 +821,8 @@ def submit_assignment(assignment_id: int, data: SubmissionCreate, db: Session = 
         raise AppError("INVALID_ANSWERS", "答案中包含不属于该作业的题目", 422)
     item = Submission(assignment_id=assignment_id, student_id=user.id, answers_json=data.answers)
     db.add(item); db.commit(); db.refresh(item)
-    return {"id": item.id, "status": item.status}
+    grading = await _grade_submission(db, item, assignment)
+    return {"id": item.id, "status": item.status, "total_score": item.total_score, "grading": grading}
 
 
 @router.post("/submissions/{submission_id}/grade", tags=["grading"])
@@ -759,33 +830,7 @@ async def grade_submission(submission_id: int, db: Session = Depends(get_db), us
     submission = db.get(Submission, submission_id)
     if not submission: raise NotFoundError("提交")
     assignment = db.get(Assignment, submission.assignment_id); owned_course(db, assignment.course_id, user)
-    if db.scalar(select(GradingResult.id).where(GradingResult.submission_id == submission.id)):
-        raise AppError("ALREADY_GRADED", "该提交已经生成批改结果，请直接复核", 409)
-    questions = list(db.scalars(select(Question).where(Question.assignment_id == assignment.id)))
-    answer_map = {int(x["question_id"]): str(x.get("answer", "")) for x in submission.answers_json}
-    output, total = [], Decimal("0")
-    for question in questions:
-        answer = answer_map.get(question.id, "")
-        if question.question_type in {"single_choice", "multiple_choice", "true_false"}:
-            correct = answer.strip().lower() == question.standard_answer.strip().lower()
-            result = {"score": float(question.max_score if correct else 0), "confidence": 1.0, "feedback": "回答正确" if correct else "回答错误", "evidence": []}
-            rule_score = Decimal(str(result["score"])); ai_score = None
-        else:
-            result = await grade_subjective(question, answer)
-            rule_score = None; ai_score = Decimal(str(result["score"]))
-        score = rule_score if rule_score is not None else ai_score
-        total += score or Decimal("0")
-        grading = GradingResult(
-            submission_id=submission.id, question_id=question.id, rule_score=rule_score,
-            ai_score=ai_score, confidence=result["confidence"], feedback=result["feedback"],
-            evidence_json=result.get("evidence", []), status=Status.pending_review,
-        )
-        db.add(grading)
-        db.flush()
-        output.append({"grading_result_id": grading.id, "question_id": question.id, **result})
-    submission.total_score = total; submission.status = Status.pending_review
-    db.commit()
-    return {"submission_id": submission.id, "suggested_total": total, "results": output, "requires_review": True}
+    return await _grade_submission(db, submission, assignment)
 
 
 @router.patch("/grading-results/{result_id}/review", tags=["grading"])
@@ -1062,6 +1107,19 @@ async def generate_report(data: ReportGenerateRequest, db: Session = Depends(get
     )
     try: content = json.loads(raw)
     except json.JSONDecodeError: raise AppError("MODEL_OUTPUT_INVALID", "报告模型输出格式无效", 502)
+    list_fields = ("highlights", "needs_attention", "action_plan")
+    for field in list_fields:
+        value = content.get(field, [])
+        if isinstance(value, str):
+            content[field] = [part.strip() for part in re.split(r"[\n；;]+", value) if part.strip()] or [value]
+        elif not isinstance(value, list):
+            content[field] = [str(value)] if value else []
+    for field in ("overview", "encouragement", "metrics_explanation"):
+        value = content.get(field, "")
+        if isinstance(value, list):
+            content[field] = "；".join(str(part) for part in value)
+        elif not isinstance(value, str):
+            content[field] = str(value or "")
     report = Report(**data.model_dump(), metrics_json=metrics, content_json=content, status=Status.pending_review)
     db.add(report); db.commit(); db.refresh(report)
     return {"id": report.id, "metrics": metrics, "content": content, "status": report.status}

@@ -138,7 +138,7 @@ class AssignmentMaterialGenerate(BaseModel):
 class QuestionCreate(BaseModel):
     question_type: str = Field(pattern="^(single_choice|multiple_choice|true_false|short_answer|essay)$")
     stem: str
-    standard_answer: str
+    standard_answer: str = ""
     options: list[dict] | None = None
     rubric: list[dict] | None = None
     knowledge_point_ids: list[int] = Field(default_factory=list)
