@@ -1,0 +1,1 @@
+{"name":"rubric_grading","version":"1.0.0","description":"对主观题执行带证据的辅助评分","prompt":"subjective_grading","allowed_tools":["get_course_context","get_assignment_rubric"],"input_schema":{"required":["question","student_answer"]},"output_schema":{"required":["score","confidence","feedback","evidence"]}}

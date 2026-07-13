@@ -9,6 +9,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from sqlalchemy import text
 
 from app.api.router import router
+from app.api.capabilities import router as capabilities_router
 from app.core.config import get_settings
 from app.core.exceptions import AppError
 from app.db.session import engine
@@ -61,6 +62,7 @@ async def ready():
 
 
 app.include_router(router, prefix=settings.api_prefix)
+app.include_router(capabilities_router, prefix=settings.api_prefix)
 
 
 class SPAStaticFiles(StaticFiles):

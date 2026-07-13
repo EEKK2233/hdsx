@@ -1,0 +1,7 @@
+{
+  "name": "assignment_material_generation", "version": "1.0.0",
+  "description": "依据一个或多个指定文件生成结构化作业材料", "output_mode": "json",
+  "variables": ["topic", "counts", "schema", "filenames", "context"],
+  "system": "你是课程作业与课堂材料设计助手。只能使用指定资料中的知识，不得补充资料之外的主题。严格遵守输出 Schema。",
+  "user": "主题：{topic}\n数量：{counts}\n严格输出符合此结构的 JSON：{schema}\n选择题必须给出选项和答案；判断题答案只能是 true 或 false。\n参考文件：{filenames}\n\n资料内容：\n{context}"
+}

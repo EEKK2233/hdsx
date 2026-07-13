@@ -3,6 +3,11 @@ import re
 
 from sqlalchemy.orm import Session
 
+from app.agents.answer import StandardAnswerAgent
+from app.agents.assignment import AssignmentAgent
+from app.agents.grading import GradingAgent
+from app.agents.lesson import LessonAgent
+from app.agents.runtime import AgentRuntime
 from app.core.exceptions import AppError
 from app.integrations.ollama import OllamaClient
 from app.rag.service import KnowledgeService
@@ -39,14 +44,14 @@ async def generate_lesson(db: Session, request) -> tuple[dict, list]:
         "ppt_outline": "使用 PPT 逐页提纲格式，每页写明“第N页｜标题”，并列出该页要点、建议图示和讲解提示；控制每页 3～6 个要点。",
         "exercise": "使用课堂练习文本格式，按“例题、练习题、思考题”分组；每题包含题干、参考答案和简要解析。",
     }
-    prompt = (
-        f"请生成{request.resource_type}，对象：{request.audience}，课时：{request.duration_minutes}分钟。"
-        f"章节：{request.chapter_title}。额外要求：{request.requirements or '无'}。"
-        f"{format_rules.get(request.resource_type, format_rules['lesson_plan'])}"
-        "只输出可供教师阅读和编辑的 Markdown 文本，使用清晰标题、段落和编号；禁止输出 JSON、代码块或字段键值对象。"
-        f"\n资料：\n{context}"
-    )
-    raw = await OllamaClient().chat("你是教师备课助手，只依据所给资料，输出适合教师直接阅读的中文备课文本。", prompt, json_mode=False)
+    result = await LessonAgent().run({
+        "resource_type": request.resource_type, "audience": request.audience,
+        "duration_minutes": request.duration_minutes, "chapter_title": request.chapter_title,
+        "requirements": request.requirements or "无",
+        "format_rules": format_rules.get(request.resource_type, format_rules["lesson_plan"]),
+        "context": context,
+    }, tools_used=["search_course_knowledge"])
+    raw = str(result.content)
     text = raw.strip()
     if not text:
         raise AppError("MODEL_OUTPUT_INVALID", "模型未返回备课文本", 502)
@@ -64,13 +69,11 @@ async def grade_subjective(question, answer: str, knowledge_context: str = "") -
         "student_answer": answer,
         "course_knowledge": knowledge_context,
     }
-    prompt = (
-        "逐评分点判断学生答案，返回JSON：score(数字), confidence(0~1), feedback(字符串), "
-        "evidence(数组，每项含criterion, matched, reason)。分数不得超过max_score。"
-        "若提供了标准答案，应结合题目、标准答案和课程资料判分；否则根据题目和课程资料自行归纳评分依据。\n"
-        + json.dumps(payload, ensure_ascii=False)
+    result = await GradingAgent().run(
+        {"payload": json.dumps(payload, ensure_ascii=False)},
+        tools_used=["get_course_context"] if knowledge_context else [],
     )
-    raw = await OllamaClient().chat("你是谨慎的作业辅助批改助手，评分结果必须由教师复核。", prompt, True)
+    raw = str(result.content)
     try:
         result = _load_model_json(raw)
         result["score"] = max(0, min(float(question.max_score), float(result.get("score", 0))))
@@ -100,13 +103,6 @@ async def generate_assignment_materials(documents, chunks, request) -> list[dict
             "options": [{"key": "A", "content": "选项"}], "max_score": 5,
         }]
     }
-    prompt = f"""根据指定资料和主题生成教学材料。主题：{request.chapter_or_topic}
-数量要求：课堂例题{request.example_count}，练习题{request.exercise_count}，思考题{request.thinking_count}，拓展材料{request.extension_count}。
-必须严格输出 JSON，结构参考：{json.dumps(schema, ensure_ascii=False)}。
-拓展材料可使用 essay 类型；选择题必须提供 options 和正确选项编号。所有内容必须能从资料推导。
-资料文件：{filenames}
-资料内容：
-{context}"""
     client = OllamaClient()
     output_schema = {
         "type": "object", "properties": {"items": {"type": "array", "items": {
@@ -119,7 +115,12 @@ async def generate_assignment_materials(documents, chunks, request) -> list[dict
             }, "required": ["material_type", "question_type", "stem", "standard_answer", "max_score"]
         }}}, "required": ["items"]
     }
-    raw = await client.chat("你是课程作业与课堂材料设计助手，不得脱离给定资料。", prompt, output_schema)
+    result = await AssignmentAgent(AgentRuntime(client)).run({
+        "topic": request.chapter_or_topic,
+        "counts": f"课堂例题{request.example_count}，练习题{request.exercise_count}，思考题{request.thinking_count}，拓展材料{request.extension_count}",
+        "schema": json.dumps(schema, ensure_ascii=False), "filenames": filenames, "context": context,
+    }, output_schema=output_schema, tools_used=["get_document_context"])
+    raw = str(result.content)
     try:
         try:
             data = _load_model_json(raw)
@@ -188,11 +189,8 @@ async def generate_assignment_materials(documents, chunks, request) -> list[dict
 async def generate_standard_answer(db: Session, course_id: int, question_type: str, stem: str, options: list | None) -> str:
     chunks = KnowledgeService(db).course_context(course_id, 6)
     context = "\n\n".join(chunk.content for chunk in chunks)
-    prompt = (
-        f"请为题目生成准确、简洁的标准答案。题型：{question_type}；题目：{stem}；"
-        f"选项：{json.dumps(options or [], ensure_ascii=False)}。"
-        "单选题只返回选项编号，多选题返回用英文逗号分隔的选项编号，判断题只返回 true 或 false；主观题返回参考答案正文。"
-        f"\n课程资料：\n{context}"
-    )
-    answer = await OllamaClient().chat("你是严谨的课程题目答案助手，只输出标准答案，不要解释或添加标题。", prompt, False)
-    return answer.strip().strip('`').strip()
+    result = await StandardAnswerAgent().run({
+        "question_type": question_type, "stem": stem,
+        "options": json.dumps(options or [], ensure_ascii=False), "context": context,
+    }, tools_used=["get_course_context"])
+    return str(result.content).strip().strip('`').strip()

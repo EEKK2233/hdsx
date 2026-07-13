@@ -1,0 +1,1 @@
+{"name":"learning_report","version":"1.0.0","description":"把结构化学情指标转换成家长可理解的报告","prompt":"parent_learning_report","allowed_tools":["get_student_mastery_summary"],"input_schema":{"required":["metrics"]},"output_schema":{"required":["overview","highlights","needs_attention","action_plan","encouragement","metrics_explanation"]}}

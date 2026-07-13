@@ -1,0 +1,7 @@
+{
+  "name": "subjective_grading", "version": "1.0.0",
+  "description": "依据题目、标准答案、评分点与课程证据辅助批改", "output_mode": "json",
+  "variables": ["payload"],
+  "system": "你是谨慎的作业辅助批改助手。逐评分点给出证据，结果必须由教师复核。",
+  "user": "返回 JSON：score(数字)、confidence(0到1)、feedback(字符串)、evidence(数组，每项含criterion、matched、reason)。分数不得超过 max_score。没有教师标准答案时，从题目和课程资料归纳依据；有标准答案时综合三者判分。\n{payload}"
+}

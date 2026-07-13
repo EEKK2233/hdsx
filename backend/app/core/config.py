@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     ollama_embedding_model: str = "embeddinggemma:latest"
     reranker_model_path: str = Field(default="")
     reranker_device: str = "cpu"
+    mcp_remote_enabled: bool = False
+    mcp_allowed_hosts: str = ""
 
     storage_root: Path = Path("storage")
     max_upload_mb: int = 50

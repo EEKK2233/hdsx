@@ -38,6 +38,9 @@ from app.modules.models import (
 from app.rag.service import KnowledgeService
 from app.services.agents import generate_assignment_materials, generate_lesson, generate_standard_answer, grade_subjective
 from app.services.documents import extract_text, read_upload
+from app.agents.report import ReportAgent
+from app.tools.contracts import ToolContext
+from app.tools.registry import get_tool_registry
 
 router = APIRouter()
 
@@ -1103,13 +1106,13 @@ def generate_learning_path(student_id: int, course_id: int, db: Session = Depend
 @router.post("/reports/generate", tags=["reports"])
 async def generate_report(data: ReportGenerateRequest, db: Session = Depends(get_db), user: User = Depends(require_roles("teacher", "admin"))):
     owned_course(db, data.course_id, user)
-    snapshots = list(db.scalars(select(MasterySnapshot).where(MasterySnapshot.student_id == data.student_id)))
-    metrics = {"knowledge_points": len(snapshots), "average_mastery": round(sum(x.score for x in snapshots) / len(snapshots), 3) if snapshots else 0, "weak_points": [x.knowledge_point_id for x in snapshots if x.score < .6]}
-    raw = await OllamaClient().chat(
-        "你是面向家长的学习沟通助手。只能解释给出的指标，不得编造数据；避免教育术语，语气客观、温和、可行动。",
-        "请返回JSON对象，字段必须为：overview（本阶段一句话概况）、highlights（进步亮点数组）、needs_attention（需要关注的方面数组）、action_plan（家长可以在家配合的具体行动数组）、encouragement（给孩子的鼓励）、metrics_explanation（用通俗语言解释数据）。指标：" + json.dumps(metrics, ensure_ascii=False),
-        True,
+    summary = await get_tool_registry().call(
+        "get_student_mastery_summary", ToolContext(db=db, user=user, trace_id=uuid.uuid4().hex),
+        {"course_id": data.course_id, "student_id": data.student_id},
     )
+    metrics = {"knowledge_points": len(summary["items"]), "average_mastery": summary["average"], "weak_points": [item["knowledge_point_id"] for item in summary["items"] if item["score"] < .6]}
+    result = await ReportAgent().run({"metrics": json.dumps(metrics, ensure_ascii=False)}, tools_used=["get_student_mastery_summary"])
+    raw = str(result.content)
     try: content = json.loads(raw)
     except json.JSONDecodeError: raise AppError("MODEL_OUTPUT_INVALID", "报告模型输出格式无效", 502)
     list_fields = ("highlights", "needs_attention", "action_plan")

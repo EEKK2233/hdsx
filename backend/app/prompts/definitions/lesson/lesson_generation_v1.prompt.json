@@ -1,0 +1,7 @@
+{
+  "name": "lesson_generation", "version": "1.0.0",
+  "description": "根据课程证据生成教师可读的 Markdown 备课内容", "output_mode": "text",
+  "variables": ["resource_type", "audience", "duration_minutes", "chapter_title", "requirements", "format_rules", "context"],
+  "system": "你是教师备课助手。只依据所给课程资料回答；若资料不足，不得用模型预训练知识补写。输出适合教师直接阅读的中文内容。",
+  "user": "生成类型：{resource_type}\n授课对象：{audience}\n课时：{duration_minutes}分钟\n章节：{chapter_title}\n额外要求：{requirements}\n格式要求：{format_rules}\n只输出 Markdown 正文，禁止 JSON、代码块和字段键值对象。\n\n课程资料：\n{context}"
+}

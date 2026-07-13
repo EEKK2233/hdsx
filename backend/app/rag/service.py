@@ -1,5 +1,4 @@
 import hashlib
-import json
 import uuid
 
 from sqlalchemy import select, text
@@ -8,10 +7,14 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.integrations.milvus import MilvusIndex
 from app.integrations.ollama import OllamaClient
-from app.integrations.reranker import BGEReranker
 from app.modules.models import Document, DocumentChunk
 from app.rag.splitter import RecursiveTextSplitter
 from app.rag.types import RagAnswer, RetrievedChunk
+from app.agents.tutor import TutorAgent
+from app.rag.citation import build_citations
+from app.rag.context_builder import ContextBuilder
+from app.rag.pipeline import RetrievalPipeline
+from app.rag.retrieval.fusion import rrf_fusion
 
 
 class KnowledgeService:
@@ -126,15 +129,7 @@ class KnowledgeService:
 
     @staticmethod
     def rrf_fusion(result_lists: list[list[RetrievedChunk]], k: int = 60) -> list[RetrievedChunk]:
-        merged: dict[int, RetrievedChunk] = {}
-        scores: dict[int, float] = {}
-        for results in result_lists:
-            for rank, item in enumerate(results, start=1):
-                merged[item.chunk_id] = item
-                scores[item.chunk_id] = scores.get(item.chunk_id, 0.0) + 1.0 / (k + rank)
-        for chunk_id, item in merged.items():
-            item.score = scores[chunk_id]
-        return sorted(merged.values(), key=lambda item: item.score, reverse=True)
+        return rrf_fusion(result_lists, k)
 
     async def hybrid_search(self, course_id: int, query: str, top_k: int | None = None) -> list[RetrievedChunk]:
         top_k = top_k or self.settings.rag_rerank_top_k
@@ -144,15 +139,7 @@ class KnowledgeService:
         except Exception:
             # 关键词检索仍可提供有依据结果；向量故障由健康检查暴露。
             vector = []
-        candidates = self.rrf_fusion([vector, keyword])
-        if not candidates:
-            return []
-        rerank_candidates = candidates[:30]
-        scores = BGEReranker().score(query, [item.content for item in rerank_candidates])
-        for item, score in zip(rerank_candidates, scores, strict=True):
-            item.rerank_score = score
-        candidates.sort(key=lambda item: item.rerank_score or item.score, reverse=True)
-        return candidates[:top_k]
+        return RetrievalPipeline().rank(query, [vector, keyword], top_k)
 
     async def answer(self, course_id: int, query: str) -> RagAnswer:
         trace_id = uuid.uuid4().hex
@@ -163,15 +150,6 @@ class KnowledgeService:
                 insufficient_evidence=True,
                 trace_id=trace_id,
             )
-        context = "\n\n".join(
-            f"[资料{i + 1}|chunk_id={c.chunk_id}|{c.filename}]\n{c.content}" for i, c in enumerate(chunks)
-        )
-        prompt = f"问题：{query}\n\n可用资料：\n{context}\n\n请只依据资料回答，并使用[资料N]标注引用。"
-        answer = await OllamaClient().chat(
-            "你是严谨的课程答疑助手。证据不足时必须说明，不得编造。", prompt
-        )
-        citations = [
-            {"chunk_id": c.chunk_id, "filename": c.filename, "chunk_index": c.chunk_index}
-            for c in chunks
-        ]
-        return RagAnswer(answer=answer, citations=citations, confidence=0.75, trace_id=trace_id)
+        context = ContextBuilder().build(chunks)
+        result = await TutorAgent().run({"query": query, "context": context}, tools_used=["search_course_knowledge"])
+        return RagAnswer(answer=str(result.content), citations=build_citations(chunks), confidence=0.75, trace_id=result.meta.trace_id)
