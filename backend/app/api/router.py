@@ -8,7 +8,7 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile, Response
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -491,7 +491,58 @@ async def lesson_generate(data: LessonGenerateRequest, db: Session = Depends(get
         content_json=content, citations_json=citations,
     )
     db.add(item); db.commit(); db.refresh(item)
-    return {"id": item.id, "content": content, "citations": citations, "status": item.status}
+    unsaved_ids = list(db.scalars(
+        select(LessonResource.id).where(
+            LessonResource.creator_id == user.id, LessonResource.is_saved.is_(False)
+        ).order_by(LessonResource.created_at.desc(), LessonResource.id.desc()).offset(30)
+    ))
+    if unsaved_ids:
+        for old in db.scalars(select(LessonResource).where(LessonResource.id.in_(unsaved_ids))):
+            db.delete(old)
+        db.commit()
+    return {"id": item.id, "content": content, "citations": citations, "status": item.status, "is_saved": item.is_saved, "created_at": item.created_at}
+
+
+@router.get("/lesson-resources", tags=["lesson"])
+def list_lesson_resources(course_id: int | None = None, db: Session = Depends(get_db), user: User = Depends(require_roles("teacher", "admin"))):
+    stmt = select(LessonResource, Course).join(Course, Course.id == LessonResource.course_id).where(LessonResource.creator_id == user.id)
+    if course_id:
+        owned_course(db, course_id, user); stmt = stmt.where(LessonResource.course_id == course_id)
+    rows = db.execute(stmt.order_by(LessonResource.created_at.desc()).limit(200)).all()
+    return [{
+        "id": item.id, "course_id": course.id, "course_name": course.name,
+        "title": item.title, "resource_type": item.resource_type,
+        "content": item.content_json, "citations": item.citations_json,
+        "is_saved": item.is_saved, "status": item.status, "created_at": item.created_at,
+    } for item, course in rows]
+
+
+@router.patch("/lesson-resources/{resource_id}/save", tags=["lesson"])
+def save_lesson_resource(resource_id: int, saved: bool = True, db: Session = Depends(get_db), user: User = Depends(require_roles("teacher", "admin"))):
+    item = db.get(LessonResource, resource_id)
+    if not item or (item.creator_id != user.id and user.role != "admin"):
+        raise NotFoundError("备课记录")
+    item.is_saved = saved; db.commit()
+    return {"id": item.id, "is_saved": item.is_saved}
+
+
+@router.delete("/lesson-resources/{resource_id}", status_code=204, tags=["lesson"])
+def delete_lesson_resource(resource_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("teacher", "admin"))):
+    item = db.get(LessonResource, resource_id)
+    if not item or (item.creator_id != user.id and user.role != "admin"):
+        raise NotFoundError("备课记录")
+    db.delete(item); db.commit()
+    return Response(status_code=204)
+
+
+@router.get("/lesson-resources/{resource_id}/download", tags=["lesson"])
+def download_lesson_resource(resource_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("teacher", "admin"))):
+    item = db.get(LessonResource, resource_id)
+    if not item or (item.creator_id != user.id and user.role != "admin"):
+        raise NotFoundError("备课记录")
+    payload = {"title": item.title, "resource_type": item.resource_type, "content": item.content_json, "citations": item.citations_json, "created_at": item.created_at.isoformat()}
+    safe_name = "lesson-resource-" + str(item.id) + ".json"
+    return Response(content=json.dumps(payload, ensure_ascii=False, indent=2), media_type="application/json; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{safe_name}"'})
 
 
 @router.post("/assignments", tags=["assignment"])

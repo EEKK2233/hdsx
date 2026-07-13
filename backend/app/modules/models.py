@@ -170,6 +170,7 @@ class LessonResource(Base, TimestampMixin):
     content_json: Mapped[dict] = mapped_column(JSON)
     citations_json: Mapped[list] = mapped_column(JSON, default=list)
     version: Mapped[int] = mapped_column(Integer, default=1)
+    is_saved: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     status: Mapped[Status] = mapped_column(Enum(Status), default=Status.draft)
 
 
