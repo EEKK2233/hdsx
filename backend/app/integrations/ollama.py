@@ -8,7 +8,7 @@ class OllamaClient:
     def __init__(self):
         self.settings = get_settings()
 
-    async def chat(self, system: str, user: str, json_mode: bool = False) -> str:
+    async def chat(self, system: str, user: str, json_mode: bool | dict = False) -> str:
         payload = {
             "model": self.settings.ollama_llm_model,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -16,7 +16,7 @@ class OllamaClient:
             "options": {"temperature": 0.2},
         }
         if json_mode:
-            payload["format"] = "json"
+            payload["format"] = json_mode if isinstance(json_mode, dict) else "json"
         try:
             async with httpx.AsyncClient(timeout=120) as client:
                 response = await client.post(f"{self.settings.ollama_base_url}/api/chat", json=payload)
@@ -43,4 +43,3 @@ class OllamaClient:
             response.raise_for_status()
             names = [item["name"] for item in response.json().get("models", [])]
             return {"ok": True, "models": names}
-

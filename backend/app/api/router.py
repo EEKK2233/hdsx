@@ -564,9 +564,13 @@ def download_lesson_resource(resource_id: int, db: Session = Depends(get_db), us
     item = db.get(LessonResource, resource_id)
     if not item or (item.creator_id != user.id and user.role != "admin"):
         raise NotFoundError("备课记录")
-    payload = {"title": item.title, "resource_type": item.resource_type, "content": item.content_json, "citations": item.citations_json, "created_at": item.created_at.isoformat()}
-    safe_name = "lesson-resource-" + str(item.id) + ".json"
-    return Response(content=json.dumps(payload, ensure_ascii=False, indent=2), media_type="application/json; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{safe_name}"'})
+    content = item.content_json or {}
+    body = content.get("text") if isinstance(content, dict) else str(content)
+    if not body:
+        body = json.dumps(content, ensure_ascii=False, indent=2)
+    document = f"# {item.title}\n\n{body}\n\n---\n生成时间：{item.created_at.isoformat()}\n"
+    safe_name = "lesson-resource-" + str(item.id) + ".md"
+    return Response(content=document, media_type="text/markdown; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{safe_name}"'})
 
 
 @router.post("/assignments", tags=["assignment"])

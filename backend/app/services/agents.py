@@ -32,21 +32,25 @@ async def generate_lesson(db: Session, request) -> tuple[dict, list]:
     context = "\n\n".join(f"[资料{i+1}] {c.content}" for i, c in enumerate(chunks))
     if not context:
         raise AppError("INSUFFICIENT_EVIDENCE", "当前课程知识库没有已完成入库的资料，请先上传文件并确认状态为 ready", 422)
-    schema = {
-        "title": "标题", "objectives": ["目标"], "key_points": ["重点"],
-        "difficulties": ["难点"], "procedure": [{"stage": "环节", "minutes": 5, "content": "内容"}],
-        "examples": [], "exercises": [], "summary": "总结", "homework": []
+    format_rules = {
+        "lesson_plan": "使用完整教案格式，依次包含：课程信息、教学目标、重点与难点、课前准备、教学过程（每个环节标注分钟数）、课堂互动、示例、练习、课堂总结和课后任务。",
+        "lecture": "使用可直接讲授的课堂讲稿格式，包含：开场导入、知识讲解、案例串讲、提问互动、易错提醒、课堂总结；语言自然，避免只列关键词。",
+        "ppt_outline": "使用 PPT 逐页提纲格式，每页写明“第N页｜标题”，并列出该页要点、建议图示和讲解提示；控制每页 3～6 个要点。",
+        "exercise": "使用课堂练习文本格式，按“例题、练习题、思考题”分组；每题包含题干、参考答案和简要解析。",
     }
     prompt = (
         f"请生成{request.resource_type}，对象：{request.audience}，课时：{request.duration_minutes}分钟。"
         f"章节：{request.chapter_title}。额外要求：{request.requirements or '无'}。"
-        f"必须输出 JSON，结构参考：{json.dumps(schema, ensure_ascii=False)}。\n资料：\n{context}"
+        f"{format_rules.get(request.resource_type, format_rules['lesson_plan'])}"
+        "只输出可供教师阅读和编辑的 Markdown 文本，使用清晰标题、段落和编号；禁止输出 JSON、代码块或字段键值对象。"
+        f"\n资料：\n{context}"
     )
-    raw = await OllamaClient().chat("你是教师备课助手，只依据所给资料。", prompt, json_mode=True)
-    try:
-        content = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise AppError("MODEL_OUTPUT_INVALID", "模型未返回有效 JSON", 502) from exc
+    raw = await OllamaClient().chat("你是教师备课助手，只依据所给资料，输出适合教师直接阅读的中文备课文本。", prompt, json_mode=False)
+    text = raw.strip()
+    if not text:
+        raise AppError("MODEL_OUTPUT_INVALID", "模型未返回备课文本", 502)
+    title = f"{request.chapter_title}｜{ {'lesson_plan':'完整教案','lecture':'课堂讲稿','ppt_outline':'PPT 提纲','exercise':'课堂练习'}.get(request.resource_type, '备课资料') }"
+    content = {"title": title, "text": text, "format": "markdown", "resource_type": request.resource_type}
     citations = [{"chunk_id": c.chunk_id, "filename": c.filename} for c in chunks]
     return content, citations
 
@@ -93,7 +97,18 @@ async def generate_assignment_materials(document, chunks, request) -> list[dict]
 资料内容：
 {context}"""
     client = OllamaClient()
-    raw = await client.chat("你是课程作业与课堂材料设计助手，不得脱离给定资料。", prompt, True)
+    output_schema = {
+        "type": "object", "properties": {"items": {"type": "array", "items": {
+            "type": "object", "properties": {
+                "material_type": {"type": "string", "enum": ["example", "exercise", "thinking", "extension"]},
+                "question_type": {"type": "string", "enum": ["single_choice", "multiple_choice", "true_false", "short_answer", "essay"]},
+                "stem": {"type": "string"}, "standard_answer": {"type": "string"},
+                "options": {"type": ["array", "null"], "items": {"type": "object", "properties": {"key": {"type": "string"}, "content": {"type": "string"}}, "required": ["key", "content"]}},
+                "max_score": {"type": "number"},
+            }, "required": ["material_type", "question_type", "stem", "standard_answer", "max_score"]
+        }}}, "required": ["items"]
+    }
+    raw = await client.chat("你是课程作业与课堂材料设计助手，不得脱离给定资料。", prompt, output_schema)
     try:
         try:
             data = _load_model_json(raw)
@@ -136,10 +151,27 @@ async def generate_assignment_materials(document, chunks, request) -> list[dict]
                 "options": options, "max_score": max(1, min(20, float(item.get("max_score") or item.get("score") or 5))),
             })
         if not output:
+            fallback = await client.chat(
+                "你是课程例题设计助手，只依据资料。",
+                f"根据资料为“{request.chapter_or_topic}”生成一道简答题。严格只输出两行：\n题目：...\n答案：...\n资料：{context[:5000]}",
+                False,
+            )
+            match = re.search(r"题目[:：]\s*(.+?)\s*答案[:：]\s*(.+)", fallback, re.S)
+            if match:
+                output.append({"material_type": "example", "question_type": "short_answer", "stem": match.group(1).strip(), "standard_answer": match.group(2).strip(), "options": None, "max_score": 5})
+        if not output:
             raise ValueError("empty items")
         return output
     except (json.JSONDecodeError, TypeError, ValueError, AttributeError) as exc:
-        raise AppError("MODEL_OUTPUT_INVALID", "作业材料生成结果格式无效", 502) from exc
+        fallback = await client.chat(
+            "你是课程例题设计助手，只依据资料。",
+            f"根据资料为“{request.chapter_or_topic}”生成一道简答题。严格只输出两行：\n题目：...\n答案：...\n资料：{context[:5000]}",
+            False,
+        )
+        match = re.search(r"题目[:：]\s*(.+?)\s*答案[:：]\s*(.+)", fallback, re.S)
+        if match:
+            return [{"material_type": "example", "question_type": "short_answer", "stem": match.group(1).strip(), "standard_answer": match.group(2).strip(), "options": None, "max_score": 5}]
+        raise AppError("MODEL_OUTPUT_INVALID", "作业材料生成失败，请缩小生成数量或更换章节主题后重试", 502) from exc
 
 
 async def generate_standard_answer(db: Session, course_id: int, question_type: str, stem: str, options: list | None) -> str:
