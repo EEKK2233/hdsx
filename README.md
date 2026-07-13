@@ -1,5 +1,7 @@
 # AI 教育智能备课与个性化学习辅导智能体
 
+华迪实训小组项目。
+
 本目录是依据仓库根目录 `11.md` 与 `44.md` 实现的项目 MVP。后端采用 FastAPI + MySQL + Milvus，前端采用 Vue 3；本地模型使用 Ollama 的 `qwen2.5:latest` 与 `embeddinggemma:latest`。
 
 ## 环境
