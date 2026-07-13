@@ -10,8 +10,10 @@ const cards=computed(()=>{
     {to:'/lesson',title:'智能备课',text:'根据教材生成教案、讲稿和练习',roles:['teacher','admin'],icon:'备'},
     {to:'/assignments',title:role==='student'?'我的作业':'作业中心',text:role==='student'?'查看并填写老师布置的作业':'创建、发布并批改学生作业',roles:['teacher','admin','student'],icon:'作'},
     {to:'/chat',title:'课堂答疑',text:'基于课程资料进行有引用的智能问答',roles:['teacher','admin','student'],icon:'问'},
+    {to:'/classroom-ops',title:'课堂运营',text:'汇总高频问题，审核并修正 AI 答疑',roles:['teacher','admin'],icon:'审'},
     {to:'/analytics',title:'学情分析',text:role==='student'?'查看我的知识点掌握情况':'查看学生薄弱知识点和学习路径',roles:['teacher','admin','student'],icon:'析'},
-    {to:'/reports',title:'学习报告',text:role==='parent'?'查看已审核发布的学习报告':'生成、审核并发布周报和月报',roles:['teacher','admin','parent'],icon:'报'}
+    {to:'/reports',title:'学习报告',text:role==='parent'?'查看已审核发布的学习报告':'生成、审核并发布周报和月报',roles:['teacher','admin','parent'],icon:'报'},
+    {to:'/notifications',title:'通知中心',text:'查看作业截止与教师修正提醒',roles:['teacher','admin','student','parent'],icon:'知'}
   ]
   return all.filter(x=>role&&x.roles.includes(role))
 })

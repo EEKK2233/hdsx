@@ -8,7 +8,8 @@ api.interceptors.request.use(config => {
 })
 api.interceptors.response.use(r=>r, error=>{
   if(error.response?.status===401){localStorage.removeItem('access_token');location.href='/login'}
-  const message=error.response?.data?.error?.message || error.message || '请求失败'
+  const detail=error.response?.data?.detail
+  const validation=Array.isArray(detail)?detail.map((x:any)=>`${x.loc?.slice(1).join('.')||'参数'}：${x.msg}`).join('；'):undefined
+  const message=error.response?.data?.error?.message || validation || (error.response?.status?`请求失败（HTTP ${error.response.status}）`:error.message) || '请求失败'
   return Promise.reject(new Error(message))
 })
-

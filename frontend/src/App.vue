@@ -14,8 +14,10 @@ const allNav=[
   {to:'/lesson',label:'智能备课',roles:['admin','teacher']},
   {to:'/assignments',label:'作业中心',roles:['admin','teacher','student']},
   {to:'/chat',label:'课堂答疑',roles:['admin','teacher','student']},
+  {to:'/classroom-ops',label:'课堂运营',roles:['admin','teacher']},
   {to:'/analytics',label:'学情分析',roles:['admin','teacher','student']},
-  {to:'/reports',label:'学习报告',roles:['admin','teacher','parent']}
+  {to:'/reports',label:'学习报告',roles:['admin','teacher','parent']},
+  {to:'/notifications',label:'通知中心',roles:['admin','teacher','student','parent']}
 ]
 const nav=computed(()=>allNav.filter(n=>auth.user&&n.roles.includes(auth.user.role)))
 const isPublic=computed(()=>['/login','/register'].includes(route.path))

@@ -10,6 +10,8 @@ import AnalyticsView from '../views/AnalyticsView.vue'
 import ReportsView from '../views/ReportsView.vue'
 import RegisterView from '../views/RegisterView.vue'
 import ProfileView from '../views/ProfileView.vue'
+import TeacherQAView from '../views/TeacherQAView.vue'
+import NotificationsView from '../views/NotificationsView.vue'
 import {useAuthStore} from '../stores/auth'
 type Role='admin'|'teacher'|'student'|'parent'
 const router=createRouter({history:createWebHistory(),routes:[
@@ -22,6 +24,8 @@ const router=createRouter({history:createWebHistory(),routes:[
   {path:'/chat',component:ChatView,meta:{roles:['teacher','admin','student']}},
   {path:'/analytics',component:AnalyticsView,meta:{roles:['teacher','admin','student']}},
   {path:'/reports',component:ReportsView,meta:{roles:['teacher','admin','parent']}}
+  ,{path:'/classroom-ops',component:TeacherQAView,meta:{roles:['teacher','admin']}}
+  ,{path:'/notifications',component:NotificationsView,meta:{roles:['teacher','admin','student','parent']}}
 ]})
 router.beforeEach(async to=>{
   if(to.meta.public)return
