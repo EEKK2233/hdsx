@@ -17,7 +17,6 @@ class Settings(BaseSettings):
     app_debug: bool = False
     serve_frontend: bool = False
     api_prefix: str = "/api/v1"
-    enabled_plugins: str = "example_hello"
     secret_key: str = "development-only-change-me"
     access_token_minutes: int = 60
 

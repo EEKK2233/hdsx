@@ -20,7 +20,7 @@ from app.api.schemas import (
     AssignmentCreate, AssignmentMaterialGenerate, ChapterCreate, CourseCreate, CourseUpdate, CourseManagerAdd, CourseOut,
     JoinRequestCreate, JoinRequestReview, KnowledgePointCreate, LessonGenerateRequest,
     LoginRequest, ParentLinkCreate, PasswordChange, ProfileUpdate, QAAnswerCorrection, QAMessageCreate,
-    QASessionCreate, QuestionCreate, RegisterRequest, ReportGenerateRequest,
+    QASessionCreate, QASessionUpdate, QuestionCreate, RegisterRequest, ReportGenerateRequest,
     ReportReviewRequest, ReviewRequest, SearchRequest, SubmissionCreate, TokenResponse,
     UserCreate, UserOut,
 )
@@ -952,6 +952,16 @@ def list_qa_sessions(course_id: int, db: Session = Depends(get_db), user: User =
     visible_course(db, course_id, user)
     items = list(db.scalars(select(QASession).where(QASession.course_id == course_id, QASession.user_id == user.id).order_by(QASession.updated_at.desc()).limit(30)))
     return [{"id": item.id, "title": item.title, "updated_at": item.updated_at} for item in items]
+
+
+@router.patch("/qa/sessions/{session_id}", tags=["qa"])
+def rename_qa_session(session_id: int, data: QASessionUpdate, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    session = db.get(QASession, session_id)
+    if not session or session.user_id != user.id:
+        raise NotFoundError("问答会话")
+    session.title = data.title.strip()
+    db.commit(); db.refresh(session)
+    return {"id": session.id, "title": session.title, "updated_at": session.updated_at}
 
 
 @router.get("/qa/sessions/{session_id}/messages", tags=["qa"])

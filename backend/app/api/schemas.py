@@ -187,6 +187,10 @@ class QASessionCreate(BaseModel):
     title: str = "新对话"
 
 
+class QASessionUpdate(BaseModel):
+    title: str = Field(min_length=1, max_length=255)
+
+
 class QAMessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
 

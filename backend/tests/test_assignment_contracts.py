@@ -1,5 +1,5 @@
 from app.api.router import _answer_tokens, normalized_question_options
-from app.api.schemas import AssignmentMaterialGenerate
+from app.api.schemas import AssignmentMaterialGenerate, QASessionUpdate
 from app.services.agents import _load_model_json
 
 
@@ -23,3 +23,7 @@ def test_true_false_options_are_always_available():
 def test_assignment_material_accepts_multiple_documents():
     request = AssignmentMaterialGenerate(document_ids=[3, 5], chapter_or_topic="第一章")
     assert request.document_ids == [3, 5]
+
+
+def test_qa_session_title_can_be_renamed():
+    assert QASessionUpdate(title="  第一章复习  ").title.strip() == "第一章复习"

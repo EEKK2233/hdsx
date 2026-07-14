@@ -46,5 +46,5 @@ async def confirm_web_import(draft_id: int, data: WebImportConfirmRequest, db: S
 
 @router.delete("/web-imports/{draft_id}", status_code=204)
 def reject_web_import(draft_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("teacher", "admin"))):
-    WebImportService(db, user).reject(draft_id)
+    WebImportService(db, user).delete_draft(draft_id)
     return Response(status_code=204)

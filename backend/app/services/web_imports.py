@@ -107,14 +107,10 @@ class WebImportService:
             target.unlink(missing_ok=True)
             raise
 
-    def reject(self, draft_id: int) -> WebImportDraft:
+    def delete_draft(self, draft_id: int) -> None:
         draft = self.db.get(WebImportDraft, draft_id)
         if not draft:
             raise AppError("WEB_DRAFT_NOT_FOUND", "网页抓取草稿不存在", 404)
         self.ensure_manager(draft.course_id)
-        if draft.status != "pending":
-            raise AppError("WEB_DRAFT_NOT_PENDING", "该网页草稿已处理", 409)
-        draft.status = "rejected"
+        self.db.delete(draft)
         self.db.commit()
-        self.db.refresh(draft)
-        return draft

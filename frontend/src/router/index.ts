@@ -16,7 +16,6 @@ import TeacherQAView from '../views/TeacherQAView.vue'
 import NotificationsView from '../views/NotificationsView.vue'
 import AgentCapabilitiesView from '../views/AgentCapabilitiesView.vue'
 import CourseModuleEntryView from '../views/CourseModuleEntryView.vue'
-import PluginHostView from '../views/PluginHostView.vue'
 import {useAuthStore} from '../stores/auth'
 type Role='admin'|'teacher'|'student'|'parent'
 const router=createRouter({history:createWebHistory(),routes:[
@@ -40,7 +39,6 @@ const router=createRouter({history:createWebHistory(),routes:[
   {path:'/classroom-ops/course/:courseId',component:TeacherQAView,meta:{roles:['teacher','admin'],title:'课堂运营'}},
   {path:'/notifications',component:NotificationsView,meta:{roles:['teacher','admin','student','parent']}}
   ,{path:'/agent-capabilities',component:AgentCapabilitiesView,meta:{roles:['admin']}}
-  ,{path:'/plugins/:pluginId',component:PluginHostView,meta:{title:'插件功能'}}
 ]})
 router.beforeEach(async to=>{
   if(to.meta.public)return

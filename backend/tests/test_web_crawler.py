@@ -4,6 +4,7 @@ import pytest
 
 from app.core.exceptions import AppError
 from app.integrations.web.crawler import ArticleHTMLParser, WebArticleCrawler
+from p.course_web_crawler import WebArticleCrawler as ComposedCrawler
 
 
 def test_article_parser_removes_scripts_and_preserves_learning_text():
@@ -24,3 +25,6 @@ def test_private_and_non_http_urls_are_denied_before_fetch():
         asyncio.run(crawler._validate_url("file:///etc/passwd"))
     assert file_url.value.code == "WEB_URL_INVALID"
 
+
+def test_core_uses_source_composed_crawler_module():
+    assert WebArticleCrawler is ComposedCrawler
