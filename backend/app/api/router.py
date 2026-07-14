@@ -582,6 +582,21 @@ def list_lesson_resources(course_id: int | None = None, db: Session = Depends(ge
     } for item, course in rows]
 
 
+@router.get("/lesson-resources/{resource_id}", tags=["lesson"])
+def get_lesson_resource(resource_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("teacher", "admin"))):
+    row = db.execute(
+        select(LessonResource, Course).join(Course, Course.id == LessonResource.course_id)
+        .where(LessonResource.id == resource_id)
+    ).first()
+    if not row or (row[0].creator_id != user.id and user.role != "admin"):
+        raise NotFoundError("备课记录")
+    item, course = row
+    return {"id": item.id, "course_id": course.id, "course_name": course.name,
+        "title": item.title, "resource_type": item.resource_type, "content": item.content_json,
+        "citations": item.citations_json, "is_saved": item.is_saved,
+        "status": item.status, "created_at": item.created_at}
+
+
 @router.patch("/lesson-resources/{resource_id}/save", tags=["lesson"])
 def save_lesson_resource(resource_id: int, saved: bool = True, db: Session = Depends(get_db), user: User = Depends(require_roles("teacher", "admin"))):
     item = db.get(LessonResource, resource_id)
