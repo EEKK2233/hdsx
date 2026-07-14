@@ -8,4 +8,5 @@ import './web-import.css'
 import './enhancements.css'
 import './navigation.css'
 import './assignment-enhancements.css'
+import './lesson.css'
 createApp(App).use(createPinia()).use(router).mount('#app')

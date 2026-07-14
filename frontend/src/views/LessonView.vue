@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import {computed,onActivated,ref} from 'vue'
+import {useRouter} from 'vue-router'
 import {api} from '../api/client'
-const courses=ref<any[]>([]),history=ref<any[]>([]),result=ref<any>(),error=ref(''),message=ref(''),loading=ref(false),showHistory=ref(true)
+const router=useRouter(),courses=ref<any[]>([]),history=ref<any[]>([]),result=ref<any>(),error=ref(''),message=ref(''),loading=ref(false),showHistory=ref(true)
 const form=ref({course_id:0,chapter_title:'',resource_type:'lesson_plan',audience:'本科生',duration_minutes:45,requirements:''})
 const typeHelp=computed(()=>({lesson_plan:'完整教案：目标、重难点、流程、互动和作业',lecture:'课堂讲稿：按授课节奏组织自然讲解文本',ppt_outline:'PPT 提纲：逐页标题、要点、图示与讲解提示',exercise:'课堂练习：例题、练习、思考题、答案与解析'} as any)[form.value.resource_type])
 const typeName=(type:string)=>({lesson_plan:'完整教案',lecture:'课堂讲稿',ppt_outline:'PPT 提纲',exercise:'课堂练习'} as any)[type]||'备课资料'
@@ -9,7 +10,7 @@ function legacyText(value:any,level=0):string{if(value==null)return'';if(typeof 
 function contentText(item:any){return item?.content?.text||legacyText(item?.content||item)}
 async function load(){courses.value=(await api.get('/courses/managed')).data;if(courses.value.length&&!form.value.course_id)form.value.course_id=courses.value[0].id;history.value=(await api.get('/lesson-resources')).data}
 async function run(){loading.value=true;error.value='';try{result.value=(await api.post('/lesson-resources/generate',form.value)).data;message.value='文本生成完成，并已加入历史记录。';await load()}catch(e:any){error.value=e.message}finally{loading.value=false}}
-async function toggleSave(item:any){await api.patch(`/lesson-resources/${item.id}/save?saved=${!item.is_saved}`);item.is_saved=!item.is_saved;if(result.value?.id===item.id)result.value.is_saved=item.is_saved;message.value=item.is_saved?'已收藏':'已取消收藏'}
+async function toggleSave(item:any){await api.patch(`/lesson-resources/${item.id}/save?saved=${!item.is_saved}`);item.is_saved=!item.is_saved;if(result.value?.id===item.id)result.value.is_saved=item.is_saved;message.value=item.is_saved?'已收藏':'已取消收藏';if(item.is_saved)await router.push('/lesson/favorites')}
 async function remove(item:any){if(!confirm(`确定删除《${item.title}》吗？`))return;await api.delete(`/lesson-resources/${item.id}`);history.value=history.value.filter(x=>x.id!==item.id);if(result.value?.id===item.id)result.value=null}
 async function download(item:any){const response=await api.get(`/lesson-resources/${item.id}/download`,{responseType:'blob'});const url=URL.createObjectURL(response.data);const link=document.createElement('a');link.href=url;link.download=`${item.title||'备课资料'}.md`;link.click();URL.revokeObjectURL(url)}
 function preview(item:any){result.value={...item,content:item.content};window.scrollTo({top:0,behavior:'smooth'})}

@@ -2,9 +2,10 @@
 import {computed,onActivated,ref,watch} from 'vue'
 import {api} from '../api/client'
 import {useAuthStore} from '../stores/auth'
-const auth=useAuthStore(),courses=ref<any[]>([]),students=ref<any[]>([]),reports=ref<any[]>([]),result=ref<any>(),error=ref(''),message=ref(''),loading=ref(false)
+import {useRoute} from 'vue-router'
+const route=useRoute(),auth=useAuthStore(),courses=ref<any[]>([]),students=ref<any[]>([]),reports=ref<any[]>([]),result=ref<any>(),error=ref(''),message=ref(''),loading=ref(false)
 const isParent=computed(()=>auth.user?.role==='parent')
-const form=ref({student_id:1,course_id:0,period_type:'week',period_start:new Date(Date.now()-604800000).toISOString(),period_end:new Date().toISOString()})
+const form=ref({student_id:1,course_id:Number(route.params.courseId)||0,period_type:'week',period_start:new Date(Date.now()-604800000).toISOString(),period_end:new Date().toISOString()})
 function asList(value:any):string[]{if(Array.isArray(value))return value.map(String);if(typeof value==='string')return value.split(/[\n；;]+/).map(x=>x.trim()).filter(Boolean);return value?[String(value)]:[]}
 function asText(value:any):string{return Array.isArray(value)?value.join('；'):String(value||'')}
 async function load(){if(isParent.value){students.value=(await api.get('/parent/students')).data;if(students.value.length&&!students.value.some(x=>x.id===form.value.student_id))form.value.student_id=students.value[0].id;await loadParentReports()}else{courses.value=(await api.get('/courses/managed')).data;if(courses.value.length&&!form.value.course_id)form.value.course_id=courses.value[0].id}}

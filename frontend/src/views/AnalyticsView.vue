@@ -2,8 +2,9 @@
 import{computed,onActivated,ref,watch}from'vue'
 import{api}from'../api/client'
 import{useAuthStore}from'../stores/auth'
-const auth=useAuthStore(),isStudent=computed(()=>auth.user?.role==='student'),studentId=ref(auth.user?.id||1),courseId=ref(0),courses=ref<any[]>([]),students=ref<any[]>([]),rows=ref<any[]>([]),path=ref<any>(),profile=ref<any>(),error=ref('')
-async function loadCourses(){courses.value=(await api.get('/courses')).data;if(courses.value.length&&!courseId.value)courseId.value=courses.value[0].id}
+import{useRoute}from'vue-router'
+const route=useRoute(),auth=useAuthStore(),isStudent=computed(()=>auth.user?.role==='student'),studentId=ref(auth.user?.id||1),courseId=ref(Number(route.params.courseId)),courses=ref<any[]>([]),students=ref<any[]>([]),rows=ref<any[]>([]),path=ref<any>(),profile=ref<any>(),error=ref('')
+async function loadCourses(){courses.value=(await api.get('/courses')).data}
 async function loadStudents(){if(isStudent.value||!courseId.value)return;students.value=(await api.get(`/courses/${courseId.value}/students`)).data;if(students.value.length)studentId.value=students.value[0].id}
 async function load(){try{rows.value=(await api.get(`/students/${studentId.value}/mastery`)).data}catch(e:any){error.value=e.message}}
 async function generate(){try{path.value=(await api.post(`/students/${studentId.value}/learning-paths/generate?course_id=${courseId.value}`)).data}catch(e:any){error.value=e.message}}
