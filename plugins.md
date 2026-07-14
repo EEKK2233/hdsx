@@ -1,139 +1,164 @@
-# 协作插件开发与使用说明
+# `p` 目录协作功能模块集成说明
 
-## 1. 方案说明
+## 1. 这不是“可选插件市场”
 
-项目支持把协作者的新功能放在根目录 `plugins/<插件ID>/` 中。核心系统只保留统一加载器、插件清单接口和通用页面宿主；新增、升级或删除普通插件时，不需要继续修改 `backend/app`、`frontend/src` 等核心业务源码。
+本项目所说的协作插件，是源码级组合模块：协作者把一项完整能力放在根目录 `p/<模块名>/` 中，项目负责人只在主项目的一个明确适配点 import 并调用它。模块启用后就是系统现有业务的一部分，不在左侧显示单独插件入口，也不允许运行时随意勾选、启停。
 
-插件可以同时提供：
+这种方式的目的：
 
-- 独立 FastAPI 路由，最终地址固定为 `/api/v1/plugins/<插件ID>/...`；
-- 独立 HTML/CSS/JavaScript 页面，显示在系统左侧导航中，并由 iframe 隔离样式；
-- 仅后端 API 插件，此时不声明页面和导航即可。
+- 协作者主要修改自己在 `p/` 下的代码，减少对核心业务文件的冲突；
+- 核心项目仍负责身份、课程权限、事务、数据库迁移和最终页面；
+- 外部功能通过少量稳定接口组合进知识库、作业、报告等现有模块；
+- Git 合并时可以清楚区分“协作者实现”和“主项目接线代码”。
 
-插件 Python 代码会运行在后端进程内，拥有与主程序相同的系统权限。因此插件不是安全沙箱，只能启用已经审查、可信且版本固定的协作者代码。
+它不是安全沙箱。`p/` 中的 Python 代码会随主项目运行，合并前必须审查。
 
-## 2. 目录结构
+## 2. 当前真实示例：知识库网页爬虫
+
+网页搜索和正文抓取实现已移动到：
 
 ```text
-plugins/
-└─ example_hello/
-   ├─ plugin.json       # 必需：身份、版本、入口、导航与角色声明
-   ├─ plugin.py         # 必需：后端入口，提供 setup(context)
-   ├─ ui/               # 可选：独立前端页面
-   │  └─ index.html
-   ├─ tests/            # 推荐：插件自己的自动化测试
-   └─ README.md         # 推荐：插件功能、权限和配置说明
+p/
+└─ course_web_crawler/
+   ├─ __init__.py
+   └─ crawler.py
 ```
 
-插件 ID 只能使用小写字母、数字和下划线，必须以字母开头，并且目录名必须与 `plugin.json` 中的 `id` 完全一致。
-
-## 3. 创建插件
-
-复制 `plugins/example_hello`，例如创建 `plugins/attendance_helper`，然后修改 `plugin.json`：
-
-```json
-{
-  "id": "attendance_helper",
-  "name": "课堂考勤助手",
-  "version": "1.0.0",
-  "api_version": "1.0",
-  "entrypoint": "plugin.py",
-  "description": "提供课程考勤记录和汇总。",
-  "navigation_label": "考勤助手",
-  "navigation_roles": ["admin", "teacher"],
-  "ui_directory": "ui"
-}
-```
-
-`plugin.py` 必须返回 `PluginContribution`：
+知识库服务只保留一处组合调用，并通过现有的兼容适配层保证从项目根目录或 `backend` 目录启动时都能找到 `p`：
 
 ```python
-from fastapi import APIRouter, Depends
-
-from app.api.dependencies import require_roles
-from app.modules.models import User
-from app.plugins.contracts import PluginContext, PluginContribution
-
-
-def setup(context: PluginContext) -> PluginContribution:
-    router = APIRouter()
-
-    @router.get("/summary")
-    def summary(user: User = Depends(require_roles("teacher", "admin"))):
-        return {"plugin": context.plugin_id, "teacher": user.display_name}
-
-    return PluginContribution(router=router)
+from app.integrations.web import WebArticleCrawler
 ```
 
-该接口最终访问地址是：
+随后在 `WebImportService` 中调用：
+
+```python
+results = await WebArticleCrawler().search(keyword, limit)
+article = await WebArticleCrawler().fetch(url)
+```
+
+抓取后的数据仍由主项目负责：课程负责人权限、临时预览、确认入库、MySQL 事务、文档去重、分块、Embedding、Milvus 索引和删除。协作者的爬虫模块不直接写数据库，因此职责边界清晰。
+
+`backend/app/integrations/web/crawler.py` 是稳定的组合适配层：它定位项目根目录并从 `p.course_web_crawler` 导出约定接口。业务代码统一依赖该适配层，协作者模块仍可独立更新，同时不会受启动工作目录影响。
+
+## 3. 推荐目录结构
 
 ```text
-GET /api/v1/plugins/attendance_helper/summary
+p/
+├─ __init__.py
+├─ course_web_crawler/       # 已集成示例
+│  ├─ __init__.py
+│  ├─ crawler.py
+│  └─ tests/                 # 可选的模块内部测试
+└─ your_feature/
+   ├─ __init__.py            # 只导出稳定公共接口
+   ├─ service.py             # 协作者实现
+   ├─ types.py               # 输入输出类型或 Pydantic Schema
+   ├─ README.md              # 使用、限制和依赖
+   └─ tests/
 ```
 
-插件必须继续使用主项目的 `current_user`、`require_roles`、课程可见性检查和 SQLAlchemy Session，不得自行绕过权限、拼接自由 SQL或连接 SQLite。
+模块名使用小写字母、数字和下划线，不要与 `backend/app` 中现有包同名。
 
-## 4. 添加插件页面
+## 4. 稳定接口原则
 
-在 `plugin.json` 中声明 `ui_directory`，并在该目录提供 `index.html`。页面由主系统通过以下地址托管：
+主项目不应直接调用协作模块几十个内部函数。`p/<模块>/__init__.py` 应只导出少量稳定接口，例如：
 
-```text
-/plugin-assets/<插件ID>/index.html
+```python
+from p.assignment_exporter.service import AssignmentExporter
+
+__all__ = ["AssignmentExporter"]
 ```
 
-同时设置 `navigation_label` 和 `navigation_roles` 后，登录用户会在左侧任务栏看到插件入口。页面和主站同源，可以读取 `localStorage` 中的 `access_token`，调用 API 时仍须显式发送：
+输入输出优先使用 dataclass 或 Pydantic：
 
-```javascript
-fetch('/api/v1/plugins/attendance_helper/summary', {
-  headers: {Authorization: `Bearer ${localStorage.getItem('access_token')}`}
-})
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class ExportRequest:
+    title: str
+    questions: list[dict]
+
+class AssignmentExporter:
+    def export_markdown(self, request: ExportRequest) -> str:
+        ...
 ```
 
-插件页面在 iframe 中运行，不会覆盖主站 CSS。不要使用远程脚本、`eval`、内联密钥或不可信 HTML；需要复杂 Vue 页面时，建议在插件目录独立构建后，只提交构建所需源码与锁文件，生成物是否入库由团队约定。
+核心代码只增加一次 import 和一次 service 调用。权限检查、ORM 查询、事务提交和 API 返回仍放在主项目中。
 
-## 5. 启用与停用
+## 5. 集成新功能的步骤
 
-只有 `ENABLED_PLUGINS` 白名单中的插件会加载。多个 ID 使用英文逗号分隔：
+以协作者 A 提供 `p/image_ocr` 为例：
 
-```dotenv
-ENABLED_PLUGINS=example_hello,attendance_helper
-```
+1. A 只在 `p/image_ocr/` 编写 OCR 和测试。
+2. A 在 `__init__.py` 导出稳定的 `ImageOCR.extract(data)`。
+3. 项目负责人审查依赖、文件访问、网络请求和异常处理。
+4. 在主项目对应 service 中加入：
 
-修改后重启后端。停用插件时从列表移除对应 ID并重启，不需要删除代码。若白名单中的插件缺少清单、入口无效或目录名不一致，后端会在启动时明确失败，避免静默运行残缺插件。
+   ```python
+   from p.image_ocr import ImageOCR
+   ```
 
-生产环境建议默认设置为空，再逐个审查和启用：
+5. 主项目在原有上传权限与事务范围内调用它。
+6. 若需要页面，在现有业务页面加入按钮或表单，不创建独立“插件页面”。
+7. 同步测试、README、`PROJECT_STATUS.md` 和受影响的 `docs/*.md`。
 
-```dotenv
-ENABLED_PLUGINS=
-```
+## 6. 核心项目与 `p` 模块的职责
 
-## 6. 数据库与迁移约束
+| 内容 | `p` 协作模块 | 核心项目 |
+| --- | --- | --- |
+| 算法、解析器、第三方服务适配 | 是 | 只调用公共接口 |
+| 登录、角色与课程权限 | 否 | 是 |
+| SQLAlchemy Session 与事务 | 原则上否 | 是 |
+| Alembic 迁移 | 不单独维护 | 进入主迁移链 |
+| 页面入口与业务流程 | 提供数据能力 | 集成到现有页面 |
+| 输入输出 Schema | 是 | 再做权限和业务校验 |
+| 独立测试 | 是 | 另做集成与回归测试 |
 
-插件若只读取现有数据，可以复用主项目 ORM。若确实需要新表或字段，必须提交到主项目的正式 Alembic 迁移链并经过负责人审核；插件不得在启动时执行 `CREATE TABLE`、调用 `create_all` 或私自维护第二套数据库迁移。
+## 7. 数据库和安全限制
 
-删除或停用插件不会自动删除数据。涉及插件数据删除时必须先备份，并使用经过审核的正式迁移或维护脚本。
+- 不允许在 `p/` 模块中连接 SQLite 或创建第二套业务数据库。
+- 不允许模块启动时执行 `create_all` 或任意 DDL。
+- 需要新表或字段时，由项目负责人加入正式 Alembic 迁移。
+- 不允许绕过 `current_user`、`require_roles`、课程成员或负责人检查。
+- 不允许硬编码密码、Token、绝对机器路径或私钥。
+- 网络模块必须设置超时、响应大小限制，并防止 SSRF；爬虫还必须遵守 robots.txt。
+- 模块异常应转换为主项目可理解的错误，不能静默吞掉数据损坏。
 
-## 7. 测试与提交
+## 8. 依赖管理
 
-提交插件前至少执行：
+协作者若需要新依赖，应先在模块 README 说明用途、版本、许可证和体积，再由项目负责人统一加入 `pyproject.toml` 和锁文件。不要让 `p/` 模块在运行时自动执行 `pip install`、下载模型或启动 Docker。
+
+## 9. 测试要求
+
+每个模块至少包含：
+
+- 公共接口输入输出测试；
+- 异常、空输入和边界测试；
+- 权限与事务由核心集成测试覆盖；
+- 旧兼容导出仍可工作的回归测试（如果存在）。
+
+项目总体验证：
 
 ```powershell
 conda activate llm_learn
+cd D:\class\Season4_5\hdsx-d\Code1
 python -m pytest -q
 cd frontend
 ..\bin\pnpm.cmd test
 ..\bin\pnpm.cmd run build
 ```
 
-检查清单：
+## 10. Git 协作建议
 
-1. 插件未启用时，主系统仍能正常启动。
-2. 普通学生不能访问教师插件接口或看到教师导航。
-3. 插件所有写操作均校验资源权限并使用事务。
-4. 清单版本采用 `主版本.次版本.修订号`。
-5. 新依赖有锁定版本，不提交密码、私钥、PDF、模型和运行数据。
-6. 同步插件 README、测试，以及受影响的项目文档。
+协作者分支尽量只包含：
 
-## 8. 已提供示例
+```text
+p/<自己的模块>/
+模块测试
+模块 README
+确实需要的依赖声明
+```
 
-仓库已包含 `plugins/example_hello`。默认开发配置启用它，教师或管理员登录后可从左侧“协作插件”进入页面并调用示例接口。确认机制后，可以保留它作为模板，也可以从 `ENABLED_PLUGINS` 中移除。
+由项目负责人在后续提交中完成核心接线和页面集成。这样合并冲突集中在少量适配代码，而协作者的大部分实现始终留在独立目录中。
