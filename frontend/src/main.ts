@@ -11,4 +11,5 @@ import './assignment-enhancements.css'
 import './lesson.css'
 import './chat-enhancements.css'
 import './web-actions.css'
+import './knowledge-layout.css'
 createApp(App).use(createPinia()).use(router).mount('#app')
