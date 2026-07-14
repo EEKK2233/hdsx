@@ -8,6 +8,7 @@ from sqlalchemy import (
     Index, Integer, String, Text, UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.dialects.mysql import MEDIUMTEXT
 
 from app.db.base import Base, TimestampMixin
 
@@ -134,6 +135,7 @@ class Document(Base, TimestampMixin):
     uploader_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     filename: Mapped[str] = mapped_column(String(255))
     source_path: Mapped[str] = mapped_column(String(1000))
+    source_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     category: Mapped[str] = mapped_column(String(80), index=True)
     mime_type: Mapped[str] = mapped_column(String(120))
     file_hash: Mapped[str] = mapped_column(String(64), index=True)
@@ -141,6 +143,24 @@ class Document(Base, TimestampMixin):
     status: Mapped[Status] = mapped_column(Enum(Status), default=Status.processing)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     __table_args__ = (UniqueConstraint("course_id", "dedup_key"),)
+
+
+class WebImportDraft(Base, TimestampMixin):
+    __tablename__ = "web_import_drafts"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id"), index=True)
+    creator_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    source_url: Mapped[str] = mapped_column(String(2000))
+    resolved_url: Mapped[str] = mapped_column(String(2000))
+    source_domain: Mapped[str] = mapped_column(String(255), index=True)
+    title: Mapped[str] = mapped_column(String(500))
+    content: Mapped[str] = mapped_column(MEDIUMTEXT)
+    content_hash: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    confirmed_document_id: Mapped[int | None] = mapped_column(ForeignKey("documents.id"), nullable=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 class DocumentChunk(Base, TimestampMixin):

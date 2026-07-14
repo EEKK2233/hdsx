@@ -108,6 +108,19 @@ class SearchRequest(BaseModel):
     top_k: int = Field(default=8, ge=1, le=30)
 
 
+class WebSearchRequest(BaseModel):
+    keyword: str = Field(min_length=1, max_length=200)
+    limit: int = Field(default=10, ge=1, le=20)
+
+
+class WebImportPreviewRequest(BaseModel):
+    url: str = Field(min_length=8, max_length=2000)
+
+
+class WebImportConfirmRequest(BaseModel):
+    category: str = Field(default="web_reference", pattern="^(web_reference|textbook|courseware|extension)$")
+
+
 class LessonGenerateRequest(BaseModel):
     course_id: int
     chapter_id: int | None = None

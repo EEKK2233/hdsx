@@ -1,1 +1,1 @@
-{"name":"standard_answer","version":"1.0.0","description":"为教师未填写答案的题目补充可编辑标准答案","prompt":"standard_answer","allowed_tools":["get_course_context"],"input_schema":{"required":["course_id","question_type","stem"]},"output_schema":{"type":"string"}}
+{"name":"standard_answer","version":"1.0.0","description":"为教师未填写答案的题目补充可编辑标准答案","prompt":"standard_answer","prompt_version":"1.1.0","allowed_tools":["get_course_context"],"input_schema":{"required":["course_id","question_type","stem"]},"output_schema":{"type":"string"}}

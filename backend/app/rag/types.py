@@ -19,6 +19,7 @@ class RetrievedChunk:
     category: str
     score: float = 0.0
     rerank_score: float | None = None
+    source_url: str | None = None
 
 
 @dataclass(slots=True)
@@ -28,4 +29,3 @@ class RagAnswer:
     confidence: float = 0.0
     insufficient_evidence: bool = False
     trace_id: str = ""
-

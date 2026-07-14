@@ -498,6 +498,7 @@ def list_documents(
         "mime_type": document.mime_type, "file_hash": document.file_hash,
         "status": document.status, "chunks": int(chunk_count),
         "created_at": document.created_at, "uploader_id": document.uploader_id,
+        "source_url": document.source_url,
     } for document, chunk_count in rows]
 
 

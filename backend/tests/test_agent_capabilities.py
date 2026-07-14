@@ -27,10 +27,10 @@ def test_prompt_and_skill_versions_are_resolvable():
     assert len(prompts.list()) >= 6
 
 
-def test_tool_registry_is_an_explicit_read_only_allowlist():
+def test_tool_registry_is_an_explicit_allowlist_with_confirmation_boundary():
     tools = get_tool_registry().list()
-    assert {item.name for item in tools} == {"search_course_knowledge", "get_course_context", "get_document_context", "get_assignment_rubric", "get_student_mastery_summary"}
-    assert all(item.read_only for item in tools)
+    assert {item.name for item in tools} == {"search_course_knowledge", "get_course_context", "get_document_context", "get_assignment_rubric", "get_student_mastery_summary", "preview_web_source"}
+    assert [item.name for item in tools if not item.read_only] == ["preview_web_source"]
 
 
 def test_runtime_blocks_tool_not_declared_by_skill():

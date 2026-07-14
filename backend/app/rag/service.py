@@ -29,7 +29,7 @@ class KnowledgeService:
         chunks = splitter.split(
             content,
             {
-                "source": document.source_path,
+                "source": document.source_url or document.source_path,
                 "filename": document.filename,
                 "category": document.category,
                 "course_id": document.course_id,
@@ -85,6 +85,7 @@ class KnowledgeService:
                 chunk_index=chunk.chunk_index,
                 category=doc.category,
                 score=1.0 / (index + 1),
+                source_url=doc.source_url,
             )
             for index, (chunk, doc) in enumerate(rows)
         ]
@@ -103,6 +104,7 @@ class KnowledgeService:
                 chunk_id=chunk.id, document_id=doc.id, content=chunk.content,
                 filename=doc.filename, chunk_index=chunk.chunk_index,
                 category=doc.category, score=1.0 / (index + 1),
+                source_url=doc.source_url,
             )
             for index, (chunk, doc) in enumerate(rows)
         ]
@@ -123,6 +125,7 @@ class KnowledgeService:
                 chunk_id=chunk.id, document_id=doc.id, content=chunk.content,
                 filename=doc.filename, chunk_index=chunk.chunk_index, category=doc.category,
                 score=score_map[chunk.id],
+                source_url=doc.source_url,
             ) for chunk, doc in rows
         ]
         return sorted(values, key=lambda item: item.score, reverse=True)

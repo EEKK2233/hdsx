@@ -1,1 +1,1 @@
-{"name":"grounded_qa","version":"1.0.0","description":"课程范围内的可追溯问答","prompt":"grounded_qa","allowed_tools":["search_course_knowledge"],"input_schema":{"required":["course_id","query"]},"output_schema":{"required":["answer","citations","trace_id"]}}
+{"name":"grounded_qa","version":"1.0.0","description":"课程范围内的可追溯问答","prompt":"grounded_qa","prompt_version":"1.1.0","allowed_tools":["search_course_knowledge"],"input_schema":{"required":["course_id","query"]},"output_schema":{"required":["answer","citations","trace_id"]}}

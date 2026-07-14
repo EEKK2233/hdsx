@@ -57,7 +57,7 @@ async def generate_lesson(db: Session, request) -> tuple[dict, list]:
         raise AppError("MODEL_OUTPUT_INVALID", "模型未返回备课文本", 502)
     title = f"{request.chapter_title}｜{ {'lesson_plan':'完整教案','lecture':'课堂讲稿','ppt_outline':'PPT 提纲','exercise':'课堂练习'}.get(request.resource_type, '备课资料') }"
     content = {"title": title, "text": text, "format": "markdown", "resource_type": request.resource_type}
-    citations = [{"chunk_id": c.chunk_id, "filename": c.filename} for c in chunks]
+    citations = [{"chunk_id": c.chunk_id, "filename": c.filename, "source_url": c.source_url} for c in chunks]
     return content, citations
 
 

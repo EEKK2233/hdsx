@@ -24,14 +24,14 @@ async def search_course_knowledge(context: ToolContext, arguments: dict) -> list
     course_id, query = int(arguments["course_id"]), str(arguments["query"]).strip()
     _ensure_course_access(context, course_id)
     chunks = await KnowledgeService(context.db).hybrid_search(course_id, query, min(int(arguments.get("top_k", 8)), 20))
-    return [{"chunk_id": c.chunk_id, "document_id": c.document_id, "filename": c.filename, "content": c.content, "score": c.rerank_score if c.rerank_score is not None else c.score} for c in chunks]
+    return [{"chunk_id": c.chunk_id, "document_id": c.document_id, "filename": c.filename, "source_url": c.source_url, "content": c.content, "score": c.rerank_score if c.rerank_score is not None else c.score} for c in chunks]
 
 
 async def get_course_context(context: ToolContext, arguments: dict) -> list[dict]:
     course_id = int(arguments["course_id"])
     _ensure_course_access(context, course_id)
     chunks = KnowledgeService(context.db).course_context(course_id, min(int(arguments.get("top_k", 8)), 20))
-    return [{"chunk_id": c.chunk_id, "document_id": c.document_id, "filename": c.filename, "content": c.content} for c in chunks]
+    return [{"chunk_id": c.chunk_id, "document_id": c.document_id, "filename": c.filename, "source_url": c.source_url, "content": c.content} for c in chunks]
 
 
 async def get_document_context(context: ToolContext, arguments: dict) -> list[dict]:
@@ -48,5 +48,4 @@ async def get_document_context(context: ToolContext, arguments: dict) -> list[di
     found = {document.id for _, document in rows}
     if found != set(document_ids):
         raise AppError("DOCUMENT_ACCESS_DENIED", "部分资料不存在、未就绪或不属于当前课程", 403)
-    return [{"chunk_id": chunk.id, "document_id": document.id, "filename": document.filename, "content": chunk.content} for chunk, document in rows]
-
+    return [{"chunk_id": chunk.id, "document_id": document.id, "filename": document.filename, "source_url": document.source_url, "content": chunk.content} for chunk, document in rows]

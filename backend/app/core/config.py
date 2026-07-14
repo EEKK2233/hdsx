@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     reranker_device: str = "cpu"
     mcp_remote_enabled: bool = False
     mcp_allowed_hosts: str = ""
+    web_fetch_timeout_seconds: int = 20
+    web_fetch_max_bytes: int = 2_000_000
+    web_fetch_max_chars: int = 50_000
+    web_import_expire_hours: int = 24
+    web_fetch_user_agent: str = "EduAgentKnowledgeBot/1.0 (+course knowledge import)"
 
     storage_root: Path = Path("storage")
     max_upload_mb: int = 50
