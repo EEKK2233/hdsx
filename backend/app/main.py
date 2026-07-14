@@ -11,6 +11,8 @@ from sqlalchemy import text
 from app.api.router import router
 from app.api.capabilities import router as capabilities_router
 from app.api.web_imports import router as web_imports_router
+from app.plugins.api import router as plugins_router
+from app.plugins.loader import get_plugin_registry
 from app.core.config import get_settings
 from app.core.exceptions import AppError
 from app.db.session import engine
@@ -65,6 +67,21 @@ async def ready():
 app.include_router(router, prefix=settings.api_prefix)
 app.include_router(capabilities_router, prefix=settings.api_prefix)
 app.include_router(web_imports_router, prefix=settings.api_prefix)
+app.include_router(plugins_router, prefix=settings.api_prefix)
+
+for plugin in get_plugin_registry().list():
+    if plugin.contribution.router:
+        app.include_router(
+            plugin.contribution.router,
+            prefix=f"{settings.api_prefix}/plugins/{plugin.manifest.id}",
+            tags=[f"plugin:{plugin.manifest.id}"],
+        )
+    if plugin.ui_path:
+        app.mount(
+            f"/plugin-assets/{plugin.manifest.id}",
+            StaticFiles(directory=plugin.ui_path, html=True),
+            name=f"plugin-ui-{plugin.manifest.id}",
+        )
 
 
 class SPAStaticFiles(StaticFiles):
