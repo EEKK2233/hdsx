@@ -1,4 +1,5 @@
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -16,9 +17,18 @@ from app.core.exceptions import AppError
 from app.db.session import engine
 from app.integrations.ollama import OllamaClient
 from app.integrations.milvus import MilvusIndex
+from app.services.model_warmup import warmup_models
 
 settings = get_settings()
-app = FastAPI(title=settings.app_name, version="0.1.0", description="AI教育智能体 MVP API")
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    application.state.model_warmup = await warmup_models()
+    yield
+
+
+app = FastAPI(title=settings.app_name, version="0.1.0", description="AI教育智能体 MVP API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -58,6 +68,7 @@ async def ready():
     except Exception as exc: checks["ollama"] = {"ok": False, "error": str(exc)}
     try: checks["milvus"] = MilvusIndex().health()
     except Exception as exc: checks["milvus"] = {"ok": False, "error": str(exc)}
+    checks["model_warmup"] = getattr(app.state, "model_warmup", {"ok": False, "error": "启动预热尚未完成"})
     ok = all(item.get("ok") for item in checks.values())
     return JSONResponse(status_code=200 if ok else 503, content={"status": "ready" if ok else "degraded", "checks": checks})
 

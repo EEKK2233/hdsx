@@ -33,3 +33,9 @@ class BGEReranker:
         with torch.no_grad():
             logits = model(**inputs).logits.view(-1).float().cpu().tolist()
         return [float(value) for value in logits]
+
+    def preload(self) -> dict:
+        if not self.settings.reranker_model_path:
+            return {"loaded": False, "reason": "未配置本地重排模型路径"}
+        _, _, device = self._load(self.settings.reranker_model_path, self.settings.reranker_device)
+        return {"loaded": True, "model_path": self.settings.reranker_model_path, "device": device}

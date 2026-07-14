@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_llm_model: str = "qwen2.5:latest"
     ollama_embedding_model: str = "embeddinggemma:latest"
+    model_warmup_enabled: bool = True
+    model_warmup_strict: bool = True
+    ollama_keep_alive: str = "-1"
+    model_warmup_timeout_seconds: int = 300
     reranker_model_path: str = Field(default="")
     reranker_device: str = "cpu"
     mcp_remote_enabled: bool = False
