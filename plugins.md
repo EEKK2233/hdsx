@@ -1,164 +1,164 @@
-# `p` 目录协作功能模块集成说明
+# `plugins` 源码组合模块使用说明
 
-## 1. 这不是“可选插件市场”
+## 1. 设计目的
 
-本项目所说的协作插件，是源码级组合模块：协作者把一项完整能力放在根目录 `p/<模块名>/` 中，项目负责人只在主项目的一个明确适配点 import 并调用它。模块启用后就是系统现有业务的一部分，不在左侧显示单独插件入口，也不允许运行时随意勾选、启停。
+这里的 `plugins` 不是运行时插件市场，也不需要管理员在页面中选择启用。它是可信协作者源码的隔离存放区：协作者把相对独立的算法、解析器或第三方服务适配放在 `Code1/plugins/<模块名>/`，主项目通过一个稳定适配层调用，以减少对核心业务文件的修改。
 
-这种方式的目的：
-
-- 协作者主要修改自己在 `p/` 下的代码，减少对核心业务文件的冲突；
-- 核心项目仍负责身份、课程权限、事务、数据库迁移和最终页面；
-- 外部功能通过少量稳定接口组合进知识库、作业、报告等现有模块；
-- Git 合并时可以清楚区分“协作者实现”和“主项目接线代码”。
-
-它不是安全沙箱。`p/` 中的 Python 代码会随主项目运行，合并前必须审查。
-
-## 2. 当前真实示例：知识库网页爬虫
-
-网页搜索和正文抓取实现已移动到：
+模块代码会和主项目运行在同一 Python 进程中，因此必须经过代码审查；它不是安全沙箱。
 
 ```text
-p/
-└─ course_web_crawler/
-   ├─ __init__.py
-   └─ crawler.py
-```
-
-知识库服务只保留一处组合调用，并通过现有的兼容适配层保证从项目根目录或 `backend` 目录启动时都能找到 `p`：
-
-```python
-from app.integrations.web import WebArticleCrawler
-```
-
-随后在 `WebImportService` 中调用：
-
-```python
-results = await WebArticleCrawler().search(keyword, limit)
-article = await WebArticleCrawler().fetch(url)
-```
-
-抓取后的数据仍由主项目负责：课程负责人权限、临时预览、确认入库、MySQL 事务、文档去重、分块、Embedding、Milvus 索引和删除。协作者的爬虫模块不直接写数据库，因此职责边界清晰。
-
-`backend/app/integrations/web/crawler.py` 是稳定的组合适配层：它定位项目根目录并从 `p.course_web_crawler` 导出约定接口。业务代码统一依赖该适配层，协作者模块仍可独立更新，同时不会受启动工作目录影响。
-
-## 3. 推荐目录结构
-
-```text
-p/
-├─ __init__.py
-├─ course_web_crawler/       # 已集成示例
+Code1/
+├─ plugins/                         # 协作者源码
 │  ├─ __init__.py
-│  ├─ crawler.py
-│  └─ tests/                 # 可选的模块内部测试
-└─ your_feature/
-   ├─ __init__.py            # 只导出稳定公共接口
-   ├─ service.py             # 协作者实现
-   ├─ types.py               # 输入输出类型或 Pydantic Schema
-   ├─ README.md              # 使用、限制和依赖
+│  └─ spider/                       # 当前已接入的网页爬虫
+│     ├─ README.md
+│     └─ spider_plugin/
+│        ├─ spider_fetcher.py       # 实际搜索与正文提取引擎
+│        ├─ spider_tool.py
+│        └─ ...
+└─ backend/app/integrations/web/
+   └─ crawler.py                    # 主项目稳定适配层
+```
+
+旧的 `Code1/p` 组合目录已经撤销，不应再向其中添加模块。
+
+## 2. 当前真实示例：`plugins/spider`
+
+主项目没有复制爬虫实现，也没有挂载协作者提供的直接入库路由。`backend/app/integrations/web/crawler.py` 只负责：
+
+1. 定位项目根目录并导入 `plugins.spider.TextCourseFetcher`。
+2. 把同步 `requests` 调用放入工作线程，避免阻塞 FastAPI 事件循环。
+3. 将结果转换为主项目稳定的 `WebArticleCrawler` / `WebArticle` 契约。
+4. 把抓取错误转换为统一业务错误。
+
+协作者爬虫已补充 HTTP/HTTPS、80/443 端口、DNS 公网地址、逐跳重定向、文本类型和 2MB 响应限制。它不执行 JavaScript、不携带登录态，也不尝试绕过付费墙或反爬限制。
+
+### 知识库调用链
+
+```text
+教师搜索或输入 URL
+  → WebImportService
+  → WebArticleCrawler 适配层
+  → plugins/spider/TextCourseFetcher
+  → 待确认 Markdown 预览
+  → 教师确认
+  → MySQL Document/Chunk + Milvus
+```
+
+课程权限、SHA-256 去重、临时草稿、确认入库、事务、文件存储、分块、Embedding 和 Milvus 索引仍由主项目负责。协作者爬虫不直接写数据库。
+
+### 课堂答疑调用链
+
+```text
+学生提问
+  → 课程知识库混合检索
+  → 证据少于两个片段？
+      ├─ 否：只使用课程资料
+      └─ 是：plugins/spider 搜索并抓取最多两篇公开网页
+  → Grounded QA Prompt（网页正文按不可信资料处理）
+  → 返回课程引用与可点击网络来源
+```
+
+网络补充只服务当前回答，不会自动写入课程知识库。网页搜索或抓取失败时自动降级，仍可使用已有课程证据；两类来源都为空时提示证据不足。
+
+## 3. 添加新的协作模块
+
+以 OCR 模块为例：
+
+```text
+plugins/
+└─ image_ocr/
+   ├─ __init__.py
+   ├─ engine.py
+   ├─ README.md
    └─ tests/
 ```
 
-模块名使用小写字母、数字和下划线，不要与 `backend/app` 中现有包同名。
+推荐流程：
 
-## 4. 稳定接口原则
+1. 协作者只在 `plugins/image_ocr` 内实现核心能力和独立测试。
+2. `__init__.py` 只导出少量稳定接口，不暴露内部辅助函数。
+3. 项目负责人在 `backend/app/integrations/ocr/` 添加薄适配层。
+4. Service 调用适配层，并继续负责身份权限、事务、幂等、审计和业务状态。
+5. 如果需要 Agent 调用，再注册有版本、输入 Schema 和只读/写入属性的 Tool；不要让模型直接导入模块。
+6. 在现有业务页面增加入口，不创建与业务割裂的“插件页面”。
 
-主项目不应直接调用协作模块几十个内部函数。`p/<模块>/__init__.py` 应只导出少量稳定接口，例如：
-
-```python
-from p.assignment_exporter.service import AssignmentExporter
-
-__all__ = ["AssignmentExporter"]
-```
-
-输入输出优先使用 dataclass 或 Pydantic：
+稳定接口示例：
 
 ```python
-from dataclasses import dataclass
+# plugins/image_ocr/__init__.py
+from .engine import OCRResult, recognize
 
-@dataclass(frozen=True)
-class ExportRequest:
-    title: str
-    questions: list[dict]
-
-class AssignmentExporter:
-    def export_markdown(self, request: ExportRequest) -> str:
-        ...
+__all__ = ["OCRResult", "recognize"]
 ```
 
-核心代码只增加一次 import 和一次 service 调用。权限检查、ORM 查询、事务提交和 API 返回仍放在主项目中。
+```python
+# backend/app/integrations/ocr/client.py
+from plugins.image_ocr import recognize
 
-## 5. 集成新功能的步骤
+def recognize_upload(path: str):
+    return recognize(path)
+```
 
-以协作者 A 提供 `p/image_ocr` 为例：
+## 4. 模块边界
 
-1. A 只在 `p/image_ocr/` 编写 OCR 和测试。
-2. A 在 `__init__.py` 导出稳定的 `ImageOCR.extract(data)`。
-3. 项目负责人审查依赖、文件访问、网络请求和异常处理。
-4. 在主项目对应 service 中加入：
+协作模块可以负责：
 
-   ```python
-   from p.image_ocr import ImageOCR
-   ```
+- 算法和数据转换；
+- 第三方公开接口或文件格式适配；
+- 明确输入输出的无状态处理；
+- 自己能力范围内的单元测试。
 
-5. 主项目在原有上传权限与事务范围内调用它。
-6. 若需要页面，在现有业务页面加入按钮或表单，不创建独立“插件页面”。
-7. 同步测试、README、`PROJECT_STATUS.md` 和受影响的 `docs/*.md`。
+核心项目必须负责：
 
-## 6. 核心项目与 `p` 模块的职责
+- 登录、RBAC 和课程归属；
+- MySQL Session、事务和 Alembic；
+- Milvus 与业务数据一致性；
+- 文件路径、配额、审计和错误响应；
+- Agent/Skill/Prompt/Tool 契约；
+- 前端业务流程。
 
-| 内容 | `p` 协作模块 | 核心项目 |
-| --- | --- | --- |
-| 算法、解析器、第三方服务适配 | 是 | 只调用公共接口 |
-| 登录、角色与课程权限 | 否 | 是 |
-| SQLAlchemy Session 与事务 | 原则上否 | 是 |
-| Alembic 迁移 | 不单独维护 | 进入主迁移链 |
-| 页面入口与业务流程 | 提供数据能力 | 集成到现有页面 |
-| 输入输出 Schema | 是 | 再做权限和业务校验 |
-| 独立测试 | 是 | 另做集成与回归测试 |
+禁止事项：
 
-## 7. 数据库和安全限制
+- 在模块内建立 SQLite 或第二套业务数据库；
+- 调用 `create_all` 或维护独立迁移链；
+- 硬编码密码、令牌、机器绝对路径；
+- 接收模型生成的自由 SQL 或系统命令；
+- 绕过 Service 直接写课程、作业、成绩或知识库；
+- 在未说明的情况下自动联网下载模型或依赖。
 
-- 不允许在 `p/` 模块中连接 SQLite 或创建第二套业务数据库。
-- 不允许模块启动时执行 `create_all` 或任意 DDL。
-- 需要新表或字段时，由项目负责人加入正式 Alembic 迁移。
-- 不允许绕过 `current_user`、`require_roles`、课程成员或负责人检查。
-- 不允许硬编码密码、Token、绝对机器路径或私钥。
-- 网络模块必须设置超时、响应大小限制，并防止 SSRF；爬虫还必须遵守 robots.txt。
-- 模块异常应转换为主项目可理解的错误，不能静默吞掉数据损坏。
+## 5. 依赖与安全
 
-## 8. 依赖管理
+新依赖必须写入模块 README，并由项目负责人审核后加入根 `pyproject.toml`。当前爬虫需要：
 
-协作者若需要新依赖，应先在模块 README 说明用途、版本、许可证和体积，再由项目负责人统一加入 `pyproject.toml` 和锁文件。不要让 `p/` 模块在运行时自动执行 `pip install`、下载模型或启动 Docker。
+```toml
+"requests>=2.31"
+"beautifulsoup4>=4.12"
+```
 
-## 9. 测试要求
+网络模块必须限制协议、端口、DNS/IP、重定向、超时、响应类型与大小。外部正文一律按不可信数据处理，不能覆盖系统 Prompt。
 
-每个模块至少包含：
+## 6. 验证和 Git
 
-- 公共接口输入输出测试；
-- 异常、空输入和边界测试；
-- 权限与事务由核心集成测试覆盖；
-- 旧兼容导出仍可工作的回归测试（如果存在）。
-
-项目总体验证：
+至少完成：
 
 ```powershell
 conda activate llm_learn
-cd D:\class\Season4_5\hdsx-d\Code1
+cd Code1
 python -m pytest -q
+
 cd frontend
-..\bin\pnpm.cmd test
-..\bin\pnpm.cmd run build
+pnpm test
+pnpm build
 ```
 
-## 10. Git 协作建议
-
-协作者分支尽量只包含：
+提交时应包含：模块源码、稳定适配层、业务接线、契约测试、README、`PROJECT_STATUS.md` 和受影响的 `docs/*.md`。推荐提交说明：
 
 ```text
-p/<自己的模块>/
-模块测试
-模块 README
-确实需要的依赖声明
-```
+feat: 接入协作者OCR源码模块
 
-由项目负责人在后续提交中完成核心接线和页面集成。这样合并冲突集中在少量适配代码，而协作者的大部分实现始终留在独立目录中。
+- 在 plugins/image_ocr 增加稳定识别接口
+- 通过 integrations/ocr 接入上传流程
+- 保留主项目权限、事务和审计边界
+- 补充回归测试与文档
+```
