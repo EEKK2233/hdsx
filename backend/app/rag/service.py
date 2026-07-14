@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.integrations.milvus import MilvusIndex
 from app.integrations.ollama import OllamaClient
-from app.modules.models import Document, DocumentChunk
+from app.modules.models import Document, DocumentChunk, Status
 from app.rag.splitter import RecursiveTextSplitter
 from app.rag.types import RagAnswer, RetrievedChunk
 from app.agents.tutor import TutorAgent
@@ -72,7 +72,7 @@ class KnowledgeService:
         stmt = (
             select(DocumentChunk, Document)
             .join(Document, Document.id == DocumentChunk.document_id)
-            .where(Document.course_id == course_id, DocumentChunk.content.contains(query))
+            .where(Document.course_id == course_id, Document.status == Status.ready, DocumentChunk.content.contains(query))
             .limit(top_k)
         )
         rows = self.db.execute(stmt).all()
@@ -118,7 +118,7 @@ class KnowledgeService:
         rows = self.db.execute(
             select(DocumentChunk, Document)
             .join(Document, Document.id == DocumentChunk.document_id)
-            .where(DocumentChunk.id.in_(score_map))
+            .where(DocumentChunk.id.in_(score_map), Document.status == Status.ready)
         ).all()
         values = [
             RetrievedChunk(

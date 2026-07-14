@@ -227,11 +227,12 @@ class Submission(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     assignment_id: Mapped[int] = mapped_column(ForeignKey("assignments.id"), index=True)
     student_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    attempt_no: Mapped[int] = mapped_column(Integer, default=1)
     answers_json: Mapped[list] = mapped_column(JSON)
     submitted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     total_score: Mapped[Decimal | None] = mapped_column(DECIMAL(7, 2), nullable=True)
     status: Mapped[Status] = mapped_column(Enum(Status), default=Status.pending_review)
-    __table_args__ = (UniqueConstraint("assignment_id", "student_id"),)
+    __table_args__ = (UniqueConstraint("assignment_id", "student_id", "attempt_no", name="uq_submission_attempt"),)
 
 
 class GradingResult(Base, TimestampMixin):

@@ -11,13 +11,13 @@ from decimal import Decimal
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile, Response
-from sqlalchemy import func, select, text
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import current_user, require_roles
 from app.api.schemas import (
-    AssignmentCreate, AssignmentMaterialGenerate, ChapterCreate, CourseCreate, CourseManagerAdd, CourseOut,
+    AssignmentCreate, AssignmentMaterialGenerate, ChapterCreate, CourseCreate, CourseUpdate, CourseManagerAdd, CourseOut,
     JoinRequestCreate, JoinRequestReview, KnowledgePointCreate, LessonGenerateRequest,
     LoginRequest, ParentLinkCreate, PasswordChange, ProfileUpdate, QAAnswerCorrection, QAMessageCreate,
     QASessionCreate, QuestionCreate, RegisterRequest, ReportGenerateRequest,
@@ -33,12 +33,12 @@ from app.modules.models import (
     Assignment, Chapter, ClassGroup, ClassMember, Course, CourseJoinRequest,
     CourseManager, CourseMember, Document, DocumentChunk, GradingResult, KnowledgePoint,
     LearningPath, LessonResource, MasterySnapshot, Notification, ParentStudentLink, QAMessage,
-    QASession, Question, Report, Status, Submission, User,
+    QASession, Question, Report, Status, Submission, User, WebImportDraft,
 )
+from app.integrations.milvus import MilvusIndex
 from app.rag.service import KnowledgeService
-from app.services.agents import generate_assignment_materials, generate_lesson, generate_standard_answer, grade_subjective
+from app.services.agents import generate_assignment_materials, generate_lesson, generate_parent_report, generate_standard_answer, grade_subjective
 from app.services.documents import extract_text, read_upload
-from app.agents.report import ReportAgent
 from app.tools.contracts import ToolContext
 from app.tools.registry import get_tool_registry
 
@@ -156,7 +156,7 @@ def create_parent_link(data: ParentLinkCreate, db: Session = Depends(get_db), _:
 
 @router.get("/courses", response_model=list[CourseOut], tags=["courses"])
 def list_courses(db: Session = Depends(get_db), user: User = Depends(current_user)):
-    stmt = select(Course).order_by(Course.id.desc())
+    stmt = select(Course).where(Course.status != Status.archived).order_by(Course.id.desc())
     if user.role == "student":
         enrolled = select(CourseMember.course_id).where(
             CourseMember.student_id == user.id, CourseMember.status == "active"
@@ -175,7 +175,7 @@ def list_courses(db: Session = Depends(get_db), user: User = Depends(current_use
 
 @router.get("/courses/managed", response_model=list[CourseOut], tags=["courses"])
 def list_managed_courses(db: Session = Depends(get_db), user: User = Depends(require_roles("teacher", "admin"))):
-    stmt = select(Course).order_by(Course.name)
+    stmt = select(Course).where(Course.status != Status.archived).order_by(Course.name)
     if user.role == "teacher":
         stmt = stmt.where(Course.id.in_(select(CourseManager.course_id).where(CourseManager.user_id == user.id)))
     return [CourseOut.model_validate(course).model_copy(update={"is_manager": True}) for course in db.scalars(stmt)]
@@ -188,6 +188,24 @@ def create_course(data: CourseCreate, db: Session = Depends(get_db), user: User 
     db.add(CourseManager(course_id=course.id, user_id=user.id, added_by=user.id))
     db.commit(); db.refresh(course)
     return course
+
+
+@router.patch("/courses/{course_id}", response_model=CourseOut, tags=["courses"])
+def update_course(course_id: int, data: CourseUpdate, db: Session = Depends(get_db), user: User = Depends(require_roles("teacher", "admin"))):
+    course = owned_course(db, course_id, user)
+    for field, value in data.model_dump().items():
+        setattr(course, field, value)
+    db.commit(); db.refresh(course)
+    return CourseOut.model_validate(course).model_copy(update={"is_manager": True})
+
+
+@router.delete("/courses/{course_id}", status_code=204, tags=["courses"])
+def delete_course(course_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("teacher", "admin"))):
+    course = owned_course(db, course_id, user)
+    course.status = Status.archived
+    db.execute(update(Assignment).where(Assignment.course_id == course_id).values(status=Status.archived))
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.get("/courses/discover", tags=["courses"])
@@ -489,7 +507,7 @@ def list_documents(
     rows = db.execute(
         select(Document, func.count(DocumentChunk.id))
         .outerjoin(DocumentChunk, DocumentChunk.document_id == Document.id)
-        .where(Document.course_id == course_id)
+        .where(Document.course_id == course_id, Document.status != Status.archived)
         .group_by(Document.id)
         .order_by(Document.created_at.desc())
     ).all()
@@ -500,6 +518,25 @@ def list_documents(
         "created_at": document.created_at, "uploader_id": document.uploader_id,
         "source_url": document.source_url,
     } for document, chunk_count in rows]
+
+
+@router.delete("/courses/{course_id}/documents/{document_id}", status_code=204, tags=["knowledge"])
+def delete_document(course_id: int, document_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("teacher", "admin"))):
+    owned_course(db, course_id, user)
+    document = db.get(Document, document_id)
+    if not document or document.course_id != course_id:
+        raise NotFoundError("知识库文档")
+    try:
+        MilvusIndex().delete_document(document.id)
+    except Exception:
+        pass  # DB 状态是检索真源；Milvus 不可用时 ready 过滤仍阻止该文档被使用。
+    path = Path(document.source_path)
+    db.execute(update(WebImportDraft).where(WebImportDraft.confirmed_document_id == document.id).values(confirmed_document_id=None))
+    db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document.id))
+    db.delete(document); db.commit()
+    if path.is_file() and get_settings().storage_root.resolve() in path.resolve().parents:
+        path.unlink(missing_ok=True)
+    return Response(status_code=204)
 
 
 @router.post("/knowledge/search", tags=["knowledge"])
@@ -586,7 +623,9 @@ def create_assignment(data: AssignmentCreate, db: Session = Depends(get_db), use
 
 
 def assignment_query_for_user(user: User):
-    stmt = select(Assignment, Course).join(Course, Course.id == Assignment.course_id)
+    stmt = select(Assignment, Course).join(Course, Course.id == Assignment.course_id).where(
+        Assignment.status != Status.archived, Course.status != Status.archived
+    )
     if user.role == "teacher":
         managed = select(CourseManager.course_id).where(CourseManager.user_id == user.id)
         stmt = stmt.where(Course.id.in_(managed))
@@ -608,9 +647,11 @@ def assignment_summary(db: Session, assignment: Assignment, course: Course, user
     submission_count = db.scalar(select(func.count(Submission.id)).where(Submission.assignment_id == assignment.id)) or 0
     my_submission = None
     if user.role == "student":
-        submission = db.scalar(select(Submission).where(Submission.assignment_id == assignment.id, Submission.student_id == user.id))
+        submission = db.scalar(select(Submission).where(
+            Submission.assignment_id == assignment.id, Submission.student_id == user.id
+        ).order_by(Submission.attempt_no.desc(), Submission.id.desc()).limit(1))
         if submission:
-            my_submission = {"id": submission.id, "status": submission.status, "total_score": submission.total_score, "submitted_at": submission.submitted_at}
+            my_submission = {"id": submission.id, "attempt_no": submission.attempt_no, "status": submission.status, "total_score": submission.total_score, "submitted_at": submission.submitted_at}
     return {
         "id": assignment.id, "title": assignment.title, "description": assignment.description,
         "course_id": course.id, "course_name": course.name, "class_id": assignment.class_id,
@@ -645,6 +686,17 @@ def get_assignment(assignment_id: int, db: Session = Depends(get_db), user: User
             item.update({"standard_answer": question.standard_answer, "rubric": question.rubric_json, "knowledge_point_ids": question.knowledge_point_ids_json})
         question_items.append(item)
     return {**assignment_summary(db, assignment, course, user), "questions": question_items}
+
+
+@router.delete("/assignments/{assignment_id}", status_code=204, tags=["assignment"])
+def delete_assignment(assignment_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("teacher", "admin"))):
+    assignment = db.get(Assignment, assignment_id)
+    if not assignment or assignment.status == Status.archived:
+        raise NotFoundError("作业")
+    owned_course(db, assignment.course_id, user)
+    assignment.status = Status.archived
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.post("/assignments/{assignment_id}/generate-materials", tags=["assignment"])
@@ -690,6 +742,7 @@ def list_assignment_submissions(assignment_id: int, db: Session = Depends(get_db
     ).all()
     return [{
         "id": submission.id, "student_id": student.id, "student_name": student.display_name,
+        "attempt_no": submission.attempt_no,
         "submitted_at": submission.submitted_at, "status": submission.status,
         "total_score": submission.total_score,
     } for submission, student in rows]
@@ -710,7 +763,7 @@ def get_submission(submission_id: int, db: Session = Depends(get_db), user: User
     results = list(db.scalars(select(GradingResult).where(GradingResult.submission_id == submission.id)))
     questions = {item.id: item for item in db.scalars(select(Question).where(Question.assignment_id == assignment.id))}
     return {
-        "id": submission.id, "assignment_id": assignment.id, "student_id": submission.student_id,
+        "id": submission.id, "assignment_id": assignment.id, "student_id": submission.student_id, "attempt_no": submission.attempt_no,
         "answers": submission.answers_json, "submitted_at": submission.submitted_at,
         "status": submission.status, "total_score": submission.total_score,
         "grading_results": [{
@@ -822,16 +875,17 @@ async def _grade_submission(db: Session, submission: Submission, assignment: Ass
 async def submit_assignment(assignment_id: int, data: SubmissionCreate, db: Session = Depends(get_db), user: User = Depends(require_roles("student"))):
     assignment = db.get(Assignment, assignment_id)
     if not assignment or assignment.status != Status.published: raise AppError("ASSIGNMENT_NOT_AVAILABLE", "作业未发布", 409)
-    if db.scalar(select(Submission.id).where(Submission.assignment_id == assignment_id, Submission.student_id == user.id)):
-        raise AppError("ALREADY_SUBMITTED", "该作业已经提交，不能重复提交", 409)
     question_ids = set(db.scalars(select(Question.id).where(Question.assignment_id == assignment_id)))
     answer_ids = {int(item.get("question_id", 0)) for item in data.answers}
     if not question_ids or not answer_ids.issubset(question_ids):
         raise AppError("INVALID_ANSWERS", "答案中包含不属于该作业的题目", 422)
-    item = Submission(assignment_id=assignment_id, student_id=user.id, answers_json=data.answers)
+    attempt_no = (db.scalar(select(func.max(Submission.attempt_no)).where(
+        Submission.assignment_id == assignment_id, Submission.student_id == user.id
+    )) or 0) + 1
+    item = Submission(assignment_id=assignment_id, student_id=user.id, attempt_no=attempt_no, answers_json=data.answers)
     db.add(item); db.commit(); db.refresh(item)
     grading = await _grade_submission(db, item, assignment)
-    return {"id": item.id, "status": item.status, "total_score": item.total_score, "grading": grading}
+    return {"id": item.id, "attempt_no": item.attempt_no, "status": item.status, "total_score": item.total_score, "grading": grading}
 
 
 @router.post("/submissions/{submission_id}/grade", tags=["grading"])
@@ -1112,23 +1166,7 @@ async def generate_report(data: ReportGenerateRequest, db: Session = Depends(get
         {"course_id": data.course_id, "student_id": data.student_id},
     )
     metrics = {"knowledge_points": len(summary["items"]), "average_mastery": summary["average"], "weak_points": [item["knowledge_point_id"] for item in summary["items"] if item["score"] < .6]}
-    result = await ReportAgent().run({"metrics": json.dumps(metrics, ensure_ascii=False)}, tools_used=["get_student_mastery_summary"])
-    raw = str(result.content)
-    try: content = json.loads(raw)
-    except json.JSONDecodeError: raise AppError("MODEL_OUTPUT_INVALID", "报告模型输出格式无效", 502)
-    list_fields = ("highlights", "needs_attention", "action_plan")
-    for field in list_fields:
-        value = content.get(field, [])
-        if isinstance(value, str):
-            content[field] = [part.strip() for part in re.split(r"[\n；;]+", value) if part.strip()] or [value]
-        elif not isinstance(value, list):
-            content[field] = [str(value)] if value else []
-    for field in ("overview", "encouragement", "metrics_explanation"):
-        value = content.get(field, "")
-        if isinstance(value, list):
-            content[field] = "；".join(str(part) for part in value)
-        elif not isinstance(value, str):
-            content[field] = str(value or "")
+    content = await generate_parent_report(metrics)
     report = Report(**data.model_dump(), metrics_json=metrics, content_json=content, status=Status.pending_review)
     db.add(report); db.commit(); db.refresh(report)
     return {"id": report.id, "metrics": metrics, "content": content, "status": report.status}

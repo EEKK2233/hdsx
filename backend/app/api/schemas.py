@@ -58,10 +58,14 @@ class UserOut(ORMModel):
 
 
 class CourseCreate(BaseModel):
-    name: str
-    subject: str
-    grade_level: str | None = None
-    description: str | None = None
+    name: str = Field(min_length=1, max_length=200)
+    subject: str = Field(min_length=1, max_length=100)
+    grade_level: str = Field(min_length=1, max_length=100)
+    description: str = Field(min_length=1, max_length=5000)
+
+
+class CourseUpdate(CourseCreate):
+    pass
 
 
 class CourseOut(ORMModel):

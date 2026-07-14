@@ -27,7 +27,7 @@ class AgentRuntime:
         for tool in requested_tools:
             trace.mark_tool(tool)
         system, user = prompt.render(**values)
-        json_mode: bool | dict = output_schema if output_schema else prompt.output_mode == "json"
+        json_mode: bool | dict = output_schema or skill.output_schema or (prompt.output_mode == "json")
         content = await self.client.chat(system, user, json_mode)
         return AgentResult(
             status="success", content=content,

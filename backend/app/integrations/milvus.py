@@ -73,7 +73,11 @@ class MilvusIndex:
         )
         return [(int(hit.entity.get("chunk_id")), float(hit.score)) for hit in results[0]]
 
+    def delete_document(self, document_id: int) -> None:
+        collection = self.collection()
+        collection.delete(f"document_id == {int(document_id)}")
+        collection.flush()
+
     def health(self) -> dict:
         self.connect()
         return {"ok": True, "collection": self.settings.milvus_collection, "collections": utility.list_collections(using=self.alias)}
-
