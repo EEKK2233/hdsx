@@ -8,7 +8,9 @@
 
 备课检索采用“整句命中优先、混合检索与 BGE 相关性阈值兜底”，无相关证据时拒绝生成，避免无论主题都引用同一份 Vue 等资料。作业材料生成可同时选择最多 10 份 ready 参考文件，并按文件均衡抽取上下文。
 
-后端已按 `44.md` 补齐并接入 `agents`、`common`、`prompts`、`skills`、`tools`、`mcp` 与分层 RAG 结构。六类 Skill 绑定六个版本化 Prompt；五个只读 Tool 通过白名单注册并复用课程权限；内部 MCP 网关支持版本协商、`ping`、`tools/list`、`tools/call`，远端 MCP 默认关闭并受主机白名单限制。管理员可从“Agent 能力”页面检查当前实际注册的版本、变量、工具和 MCP 状态。
+后端已按 `44.md` 补齐并接入 `agents`、`common`、`prompts`、`skills`、`tools`、`mcp` 与分层 RAG 结构。六类 Skill 使用版本化 Prompt；五个只读 Tool 和一个网页预览 Tool 通过白名单注册并复用课程权限；内部 MCP 网关支持版本协商、`ping`、`tools/list`、`tools/call`，远端 MCP 默认关闭并受主机白名单限制。管理员可从“Agent 能力”页面检查当前实际注册的版本、变量、工具和 MCP 状态。
+
+知识库支持参考 `../course_spider/course_spider.py` 的网络资料获取流程：课程负责人可以按主题搜索或粘贴网页 URL，查看系统提取的正文预览，明确确认后才写入知识库、分块并向量化。待确认草稿 24 小时过期；系统遵守 robots.txt，并阻止内网地址、非 80/443 端口、异常重定向、非文本响应和超大页面。确认后的网页资料与本地文件一样参与备课、出题、答疑和标准答案生成，并保留原始来源链接。
 
 华迪实训小组项目。
 
@@ -29,6 +31,8 @@
 4. 执行迁移：`cd backend && alembic upgrade head`。
 5. 启动后端：`powershell -ExecutionPolicy Bypass -File .\start_backend.ps1`。脚本将 reload 范围限制在 `backend`，避免扫描前端依赖目录。
 6. 启动前端：`powershell -ExecutionPolicy Bypass -File .\start_frontend.ps1`。
+
+当前数据库迁移版本为 `0008_web_imports`。升级后才能使用网页抓取草稿和文档来源 URL。
 
 也可以手动启动后端：
 

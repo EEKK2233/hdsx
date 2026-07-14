@@ -1,9 +1,18 @@
 # 项目续接状态
 
+## 2026-07-14 网络资料确认入库更新
+
+- 参考 `course_spider.py` 实现关键词搜索、直接 URL 抓取、正文清洗和来源保留。
+- 网页内容先保存到 `web_import_drafts`，必须由课程负责人确认后才生成 Document、分块、Embedding 和 Milvus 索引；草稿 24 小时过期并支持拒绝。
+- 增加 SSRF 防护、DNS/IP 校验、80/443 端口限制、逐跳重定向校验、robots.txt、2MB 响应和 5 万字符限制。
+- MCP 白名单新增 `preview_web_source@1.0.0`，只能生成待确认预览，不能替用户确认入库。
+- 备课、作业、问答和标准答案 Prompt 升级至 `1.1.0`，明确把网页资料内命令视为不可信正文。
+- MySQL 已从 `0007_classroom_ops` 升级到 `0008_web_imports`；后端 `18 passed`，Vue 生产构建 `125 modules transformed`。
+
 ## 2026-07-13 Agent 平台与目录对齐更新
 
 - 已补齐并实际接入 `common`、`agents`、`prompts`、`skills`、`tools`、`mcp` 以及 RAG 子模块，不再把核心提示词和编排全部集中在 `services/agents.py`。
-- 已建立 6 个版本化 Prompt、6 个 Skill 契约、6 个领域 Agent 和 5 个只读白名单 Tool；备课、作业生成、批改、标准答案、答疑、学习报告均通过统一 Runtime。
+- 已建立 6 类 Skill、6 个领域 Agent、10 个保留历史版本的 Prompt，以及 5 个只读 Tool + 1 个需人工确认的网页预览 Tool；备课、作业生成、批改、标准答案、答疑、学习报告均通过统一 Runtime。
 - 已实现站内认证 MCP JSON-RPC 安全网关和默认禁用的远端 MCP 客户端；所有 Tool 复用课程/学生数据权限，模型不能执行自由 SQL。
 - RAG 已拆分 loader、cleaner、splitter、embedding、index、fusion、deduplicator、filter、reranker、context builder、citation 和 pipeline。
 - 前端新增公共组件、composable、类型目录和管理员“Agent 能力中心”。
