@@ -1,5 +1,9 @@
 # AI 教育智能备课与个性化学习辅导智能体
 
+知识库文件现支持按课程权限预览：Markdown/网页资料渲染显示，其他解析文本保留原始换行。管理员可在“模型服务”页面分别配置 Ollama 或 OpenAI-compatible 的 LLM 与 Embedding；实现位于源码组合模块 `plugins/model_providers`，现有 Agent、RAG、备课、作业、批改和启动预热均统一使用运行时 Provider。
+
+模型 API Key 使用 `SECRET_KEY` 派生密钥加密到 `storage/system/model-providers.enc`，查询接口不会返回明文。切换 Embedding 时必须填写真实维度；若维度变化，请使用新的 Milvus collection 名称并为既有资料重新建立向量索引。未保存管理员配置时继续使用 `.env` 的 Ollama 默认值。
+
 当前版本进一步提供可恢复的答疑会话与备课历史、多角色注册和家长多学生绑定、基于知识库的作业材料生成、薄弱知识画像、课堂高频问题、教师修正 AI 回答、站内通知及家长友好学习报告。教师可查看全部课程信息，但教学操作严格限制在其负责课程。
 
 作业中心现支持严格契约解析 AI 材料、多选与判断题完整选项、已添加题目再次编辑、空标准答案由课程知识库自动补充，以及学生多次提交后逐次立即批改并显示标准答案。批改、材料生成和学习报告均使用 JSON Schema、Pydantic 校验和确定性兜底，模型格式异常不会再直接造成 5xx。
@@ -20,7 +24,7 @@
 
 智能备课 Markdown 使用独立渲染预览页。历史标题取填写的章节或主题，收藏按钮只切换状态，独立“★ 收藏夹”按钮进入收藏页，历史四项操作在桌面端等宽单行排列。只有从收藏页点击预览时，导航才显示收藏层级。知识库页面采用横向课程标签和左右双栏工作区。
 
-本目录是依据仓库根目录 `11.md` 与 `44.md` 实现的项目 MVP。后端采用 FastAPI + MySQL + Milvus，前端采用 Vue 3；本地模型使用 Ollama 的 `qwen2.5:latest` 与 `embeddinggemma:latest`。
+本目录是依据仓库根目录 `11.md` 与 `44.md` 实现的项目。后端采用 FastAPI + MySQL + Milvus，前端采用 Vue 3；默认使用 Ollama 的 `qwen2.5:latest` 与 `embeddinggemma:latest`，管理员也可以切换为其他本地模型或 API 模型。
 
 后端启动时默认预载 Ollama 对话模型、Embedding 模型以及已配置的本地 BGE 重排模型，Ollama 通过 `OLLAMA_KEEP_ALIVE=-1` 常驻内存/显存。严格预热默认开启，失败会阻止服务接受请求；如需仅诊断外部服务，可临时设 `MODEL_WARMUP_STRICT=false`。系统不会自动下载缺失模型。
 

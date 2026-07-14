@@ -16,6 +16,7 @@ import TeacherQAView from '../views/TeacherQAView.vue'
 import NotificationsView from '../views/NotificationsView.vue'
 import AgentCapabilitiesView from '../views/AgentCapabilitiesView.vue'
 import CourseModuleEntryView from '../views/CourseModuleEntryView.vue'
+import ModelSettingsView from '../views/ModelSettingsView.vue'
 import {useAuthStore} from '../stores/auth'
 type Role='admin'|'teacher'|'student'|'parent'
 const router=createRouter({history:createWebHistory(),routes:[
@@ -38,7 +39,7 @@ const router=createRouter({history:createWebHistory(),routes:[
   {path:'/classroom-ops',component:CourseModuleEntryView,meta:{roles:['teacher','admin'],title:'课堂运营',base:'/classroom-ops',description:'选择课程后查看高频问题、答疑记录并修正 AI 回答。'}},
   {path:'/classroom-ops/course/:courseId',component:TeacherQAView,meta:{roles:['teacher','admin'],title:'课堂运营'}},
   {path:'/notifications',component:NotificationsView,meta:{roles:['teacher','admin','student','parent']}}
-  ,{path:'/agent-capabilities',component:AgentCapabilitiesView,meta:{roles:['admin']}}
+  ,{path:'/agent-capabilities',component:AgentCapabilitiesView,meta:{roles:['admin']}},{path:'/model-settings',component:ModelSettingsView,meta:{roles:['admin'],title:'模型服务'}}
 ]})
 router.beforeEach(async to=>{
   if(to.meta.public)return

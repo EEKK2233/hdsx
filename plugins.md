@@ -1,5 +1,23 @@
 # `plugins` 源码组合模块使用说明
 
+## 当前模型 Provider 组合模块
+
+`plugins/model_providers` 从 `hdsx-main` 的模型切换能力提取，提供 Ollama 与 OpenAI-compatible 两套 LLM/Embedding 实现，不依赖 FastAPI、SQLAlchemy 或课程业务模型。`backend/app/integrations/model_runtime.py` 负责 `.env` 默认值、地址/维度/collection 校验和业务异常转换；原 `OllamaClient` 保留兼容外观，使 Agent 和 RAG 无需复制调用逻辑。
+
+管理员配置由核心 API 执行 RBAC 后交给模块加密存储，API Key 不会出现在查询响应中。“模型服务”页面选择的是模块内部 Provider，不是启停源码模块。
+
+```text
+管理员模型服务页
+  → admin-only API + 参数校验
+  → integrations/model_runtime.py
+  → plugins/model_providers
+      ├→ Ollama
+      └→ OpenAI-compatible API
+  → Agent / RAG / 启动预热
+```
+
+该模块新增 `cryptography>=42.0` 依赖，用于以 `SECRET_KEY` 派生的 Fernet 密钥加密本地配置。Embedding 模型切换还必须同步真实向量维度和 Milvus collection；维度不匹配时核心适配层会拒绝写入。
+
 ## 1. 设计目的
 
 这里的 `plugins` 不是运行时插件市场，也不需要管理员在页面中选择启用。它是可信协作者源码的隔离存放区：协作者把相对独立的算法、解析器或第三方服务适配放在 `Code1/plugins/<模块名>/`，主项目通过一个稳定适配层调用，以减少对核心业务文件的修改。

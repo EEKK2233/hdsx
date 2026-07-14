@@ -1,5 +1,13 @@
 # 项目续接状态
 
+## 2026-07-14 知识库文档预览与管理员模型 Provider 更新
+
+- 知识库文件新增预览；课程成员可查看已解析内容，Markdown/网页来源安全渲染，普通解析文本保留换行，单次预览限制 10 万字符。
+- 参考 `hdsx-main`，在 `plugins/model_providers` 提取独立于业务框架的 Ollama/OpenAI-compatible LLM 与 Embedding 契约、工厂及加密存储。
+- 新增仅管理员可用的“模型服务”页面及查询、连接测试、保存接口；API Key 只加密落盘，不回传明文。
+- Agent、RAG、作业、批改、备课、答疑和启动预热统一经过运行时 Provider；Milvus collection 与维度随配置读取，维度冲突时明确拒绝。
+- 本轮不修改 MySQL 表结构，迁移版本仍为 `0009_submission_attempts`。
+
 ## 2026-07-14 plugins 爬虫、联网答疑、模型预热与页面布局更新
 
 - 源码组合目录由 `Code1/p` 统一迁移为 `Code1/plugins`；撤下旧 `p/course_web_crawler`，实际搜索与正文提取改用协作者提供的 `plugins/spider/TextCourseFetcher`，核心项目仅保留异步与错误契约适配层。

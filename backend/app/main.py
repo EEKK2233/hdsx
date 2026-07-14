@@ -12,6 +12,7 @@ from sqlalchemy import text
 from app.api.router import router
 from app.api.capabilities import router as capabilities_router
 from app.api.web_imports import router as web_imports_router
+from app.api.model_settings import router as model_settings_router
 from app.core.config import get_settings
 from app.core.exceptions import AppError
 from app.db.session import engine
@@ -64,8 +65,8 @@ async def ready():
         with engine.connect() as conn: conn.execute(text("SELECT 1"))
         checks["mysql"] = {"ok": True}
     except Exception as exc: checks["mysql"] = {"ok": False, "error": str(exc)}
-    try: checks["ollama"] = await OllamaClient().health()
-    except Exception as exc: checks["ollama"] = {"ok": False, "error": str(exc)}
+    try: checks["models"] = await OllamaClient().health()
+    except Exception as exc: checks["models"] = {"ok": False, "error": str(exc)}
     try: checks["milvus"] = MilvusIndex().health()
     except Exception as exc: checks["milvus"] = {"ok": False, "error": str(exc)}
     checks["model_warmup"] = getattr(app.state, "model_warmup", {"ok": False, "error": "启动预热尚未完成"})
@@ -76,6 +77,7 @@ async def ready():
 app.include_router(router, prefix=settings.api_prefix)
 app.include_router(capabilities_router, prefix=settings.api_prefix)
 app.include_router(web_imports_router, prefix=settings.api_prefix)
+app.include_router(model_settings_router, prefix=settings.api_prefix)
 
 
 class SPAStaticFiles(StaticFiles):

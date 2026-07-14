@@ -1,70 +1,51 @@
-import httpx
-
-from app.core.config import get_settings
 from app.core.exceptions import AppError
+from app.integrations.model_runtime import get_model_runtime, provider_app_error
+from plugins.model_providers import ProviderError
 
 
 class OllamaClient:
+    """向后兼容外观；实际 Provider 由管理员运行时配置决定。"""
+
     def __init__(self):
-        self.settings = get_settings()
+        self.runtime = get_model_runtime()
+        self.settings = None  # 兼容迁移期测试注入 ollama_keep_alive。
 
     @property
     def keep_alive(self) -> int | str:
-        value = self.settings.ollama_keep_alive.strip()
+        value = (self.settings.ollama_keep_alive if self.settings else self.runtime.config().keep_alive).strip()
         return int(value) if value.lstrip("-").isdigit() else value
 
     async def chat(self, system: str, user: str, json_mode: bool | dict = False) -> str:
-        payload = {
-            "model": self.settings.ollama_llm_model,
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            "stream": False,
-            "keep_alive": self.keep_alive,
-            "options": {"temperature": 0.2},
-        }
-        if json_mode:
-            payload["format"] = json_mode if isinstance(json_mode, dict) else "json"
         try:
-            async with httpx.AsyncClient(timeout=120) as client:
-                response = await client.post(f"{self.settings.ollama_base_url}/api/chat", json=payload)
-                response.raise_for_status()
-                return response.json()["message"]["content"]
-        except (httpx.HTTPError, KeyError) as exc:
-            raise AppError("MODEL_UNAVAILABLE", f"Ollama 调用失败：{exc}", 503) from exc
+            return await self.runtime.llm().chat(system, user, json_mode)
+        except ProviderError as exc:
+            raise provider_app_error(exc) from exc
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         try:
-            async with httpx.AsyncClient(timeout=120) as client:
-                response = await client.post(
-                    f"{self.settings.ollama_base_url}/api/embed",
-                    json={"model": self.settings.ollama_embedding_model, "input": texts, "keep_alive": self.keep_alive},
-                )
-                response.raise_for_status()
-                return response.json()["embeddings"]
-        except (httpx.HTTPError, KeyError) as exc:
-            raise AppError("EMBEDDING_UNAVAILABLE", f"Embedding 调用失败：{exc}", 503) from exc
+            vectors = await self.runtime.embedding().embed(texts)
+            expected = self.runtime.config().embedding_dimension
+            if any(len(vector) != expected for vector in vectors):
+                raise AppError("EMBEDDING_DIMENSION_MISMATCH", f"Embedding 实际维度与配置的 {expected} 不一致", 422)
+            return vectors
+        except ProviderError as exc:
+            raise provider_app_error(exc, "EMBEDDING_UNAVAILABLE") from exc
 
     async def preload(self) -> dict:
-        """Load configured Ollama weights before the API starts accepting traffic."""
-        timeout = self.settings.model_warmup_timeout_seconds
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            llm = await client.post(
-                f"{self.settings.ollama_base_url}/api/generate",
-                json={"model": self.settings.ollama_llm_model, "prompt": "模型预热", "stream": False,
-                      "keep_alive": self.keep_alive, "options": {"num_predict": 1}},
-            )
-            llm.raise_for_status()
-            embedding = await client.post(
-                f"{self.settings.ollama_base_url}/api/embed",
-                json={"model": self.settings.ollama_embedding_model, "input": ["模型预热"],
-                      "keep_alive": self.keep_alive},
-            )
-            embedding.raise_for_status()
-        return {"llm": self.settings.ollama_llm_model, "embedding": self.settings.ollama_embedding_model,
-                "keep_alive": self.keep_alive}
+        config = self.runtime.config()
+        try:
+            llm = await self.runtime.llm(config).preload()
+            embedding = await self.runtime.embedding(config).preload()
+            actual = embedding.get("dimension")
+            if actual and actual != config.embedding_dimension:
+                raise AppError("EMBEDDING_DIMENSION_MISMATCH", f"Embedding 实际维度 {actual}，配置维度 {config.embedding_dimension}", 422)
+            return {"llm": llm, "embedding": embedding, "keep_alive": self.keep_alive}
+        except ProviderError as exc:
+            raise provider_app_error(exc) from exc
 
     async def health(self) -> dict:
-        async with httpx.AsyncClient(timeout=3) as client:
-            response = await client.get(f"{self.settings.ollama_base_url}/api/tags")
-            response.raise_for_status()
-            names = [item["name"] for item in response.json().get("models", [])]
-            return {"ok": True, "models": names}
+        try:
+            return {"ok": True, "llm": await self.runtime.llm().health(),
+                    "embedding": await self.runtime.embedding().health()}
+        except ProviderError as exc:
+            raise provider_app_error(exc) from exc

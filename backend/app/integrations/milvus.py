@@ -3,6 +3,8 @@ from threading import Lock
 from pymilvus import Collection, CollectionSchema, DataType, FieldSchema, connections, utility
 
 from app.core.config import get_settings
+from app.core.exceptions import AppError
+from app.integrations.model_runtime import get_model_runtime
 
 
 class MilvusIndex:
@@ -10,6 +12,7 @@ class MilvusIndex:
 
     def __init__(self):
         self.settings = get_settings()
+        self.model_config = get_model_runtime().config()
         self.alias = "edu_agent"
 
     def connect(self) -> None:
@@ -20,7 +23,7 @@ class MilvusIndex:
 
     def collection(self) -> Collection:
         self.connect()
-        name = self.settings.milvus_collection
+        name = self.model_config.vector_collection
         with self._lock:
             if not utility.has_collection(name, using=self.alias):
                 schema = CollectionSchema(
@@ -31,7 +34,7 @@ class MilvusIndex:
                         FieldSchema("document_id", DataType.INT64),
                         FieldSchema("category", DataType.VARCHAR, max_length=80),
                         FieldSchema("content_hash", DataType.VARCHAR, max_length=64),
-                        FieldSchema("embedding", DataType.FLOAT_VECTOR, dim=768),
+                        FieldSchema("embedding", DataType.FLOAT_VECTOR, dim=self.model_config.embedding_dimension),
                     ],
                     description="AI education document chunks",
                     enable_dynamic_field=False,
@@ -42,6 +45,15 @@ class MilvusIndex:
                 )
             else:
                 collection = Collection(name, using=self.alias)
+                embedding_field = next(field for field in collection.schema.fields if field.name == "embedding")
+                actual_dimension = int(embedding_field.params.get("dim", 0))
+                if actual_dimension != self.model_config.embedding_dimension:
+                    raise AppError(
+                        "MILVUS_DIMENSION_MISMATCH",
+                        f"collection {name} 的维度为 {actual_dimension}，当前 Embedding 配置为 "
+                        f"{self.model_config.embedding_dimension}；请使用新的 collection 名称或重建向量索引",
+                        409,
+                    )
         collection.load()
         return collection
 
@@ -80,4 +92,6 @@ class MilvusIndex:
 
     def health(self) -> dict:
         self.connect()
-        return {"ok": True, "collection": self.settings.milvus_collection, "collections": utility.list_collections(using=self.alias)}
+        return {"ok": True, "collection": self.model_config.vector_collection,
+                "dimension": self.model_config.embedding_dimension,
+                "collections": utility.list_collections(using=self.alias)}

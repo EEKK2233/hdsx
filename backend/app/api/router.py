@@ -520,6 +520,40 @@ def list_documents(
     } for document, chunk_count in rows]
 
 
+@router.get("/courses/{course_id}/documents/{document_id}/preview", tags=["knowledge"])
+def preview_document(
+    course_id: int, document_id: int, db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    visible_course(db, course_id, user)
+    document = db.get(Document, document_id)
+    if not document or document.course_id != course_id or document.status == Status.archived:
+        raise NotFoundError("知识库文档")
+    chunks = list(db.scalars(
+        select(DocumentChunk).where(DocumentChunk.document_id == document.id)
+        .order_by(DocumentChunk.chunk_index)
+    ))
+    limit = 100_000
+    parts: list[str] = []
+    for chunk in chunks:
+        content = chunk.content
+        if parts:
+            previous = parts[-1]
+            overlap = next((size for size in range(min(500, len(previous), len(content)), 19, -1)
+                            if previous.endswith(content[:size])), 0)
+            content = content[overlap:]
+        parts.append(content)
+    full_content = "\n\n".join(parts)
+    suffix = Path(document.filename).suffix.lower()
+    return {
+        "id": document.id, "filename": document.filename, "mime_type": document.mime_type,
+        "category": document.category, "source_url": document.source_url,
+        "format": "markdown" if suffix in {".md", ".markdown"} or document.source_url else "text",
+        "content": full_content[:limit], "chunks": len(chunks),
+        "truncated": len(full_content) > limit,
+    }
+
+
 @router.delete("/courses/{course_id}/documents/{document_id}", status_code=204, tags=["knowledge"])
 def delete_document(course_id: int, document_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("teacher", "admin"))):
     owned_course(db, course_id, user)

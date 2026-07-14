@@ -54,8 +54,9 @@ class KnowledgeService:
         if not chunks:
             return 0
         embeddings = await OllamaClient().embed([chunk.content for chunk in chunks])
-        if any(len(vector) != 768 for vector in embeddings):
-            raise ValueError("embeddinggemma 向量维度不是预期的 768")
+        expected_dimension = OllamaClient().runtime.config().embedding_dimension
+        if any(len(vector) != expected_dimension for vector in embeddings):
+            raise ValueError(f"Embedding 向量维度不是配置的 {expected_dimension}")
         MilvusIndex().upsert([
             {
                 "chunk_id": chunk.id, "course_id": document.course_id,

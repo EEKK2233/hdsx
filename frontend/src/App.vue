@@ -15,7 +15,7 @@ const allNav:NavItem[]=[
   {to:'/chat',label:'课堂答疑',roles:['admin','teacher','student']},{to:'/classroom-ops',label:'课堂运营',roles:['admin','teacher']},
   {to:'/analytics',label:'学情分析',roles:['admin','teacher','student']},{to:'/reports',parentTo:'/reports/family',label:'学习报告',roles:['admin','teacher','parent']},
   {to:'/notifications',label:'通知中心',roles:['admin','teacher','student','parent']},
-  {to:'/agent-capabilities',label:'Agent 能力',roles:['admin']}
+  {to:'/agent-capabilities',label:'Agent 能力',roles:['admin']},{to:'/model-settings',label:'模型服务',roles:['admin']}
 ]
 const nav=computed<NavItem[]>(()=>allNav.filter(n=>auth.user&&n.roles.includes(auth.user.role)).map(n=>({...n,to:auth.user?.role==='parent'&&n.parentTo?n.parentTo:n.to})))
 const isPublic=computed(()=>['/login','/register'].includes(route.path))

@@ -18,10 +18,10 @@ async def warmup_models() -> dict:
 
     components: dict[str, dict] = {}
     try:
-        components["ollama"] = {"ok": True, **await OllamaClient().preload()}
+        components["models"] = {"ok": True, **await OllamaClient().preload()}
     except Exception as exc:
         logger.exception("Ollama 模型启动预热失败")
-        components["ollama"] = {"ok": False, "error": str(exc)}
+        components["models"] = {"ok": False, "error": str(exc)}
 
     try:
         reranker = await asyncio.to_thread(BGEReranker().preload)

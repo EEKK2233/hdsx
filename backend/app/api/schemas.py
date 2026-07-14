@@ -206,3 +206,19 @@ class ReportGenerateRequest(BaseModel):
     period_type: str = Field(pattern="^(week|month)$")
     period_start: datetime
     period_end: datetime
+
+
+class ModelSettingsUpdate(BaseModel):
+    llm_provider: str = Field(pattern="^(ollama|openai_compatible)$")
+    llm_base_url: str = Field(min_length=8, max_length=2000)
+    llm_model: str = Field(min_length=1, max_length=255)
+    llm_api_key: str | None = Field(default=None, max_length=4000)
+    clear_llm_api_key: bool = False
+    embedding_provider: str = Field(pattern="^(ollama|openai_compatible)$")
+    embedding_base_url: str = Field(min_length=8, max_length=2000)
+    embedding_model: str = Field(min_length=1, max_length=255)
+    embedding_api_key: str | None = Field(default=None, max_length=4000)
+    clear_embedding_api_key: bool = False
+    embedding_dimension: int = Field(ge=1, le=65536)
+    vector_collection: str = Field(min_length=1, max_length=255)
+    keep_alive: str = Field(default="-1", min_length=1, max_length=30)
