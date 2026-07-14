@@ -13,4 +13,5 @@ import './chat-enhancements.css'
 import './web-actions.css'
 import './knowledge-layout.css'
 import './model-settings.css'
+import './layout-fixes.css'
 createApp(App).use(createPinia()).use(router).mount('#app')

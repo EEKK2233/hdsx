@@ -19,9 +19,9 @@ class BGEReranker:
         model.to(device).eval()
         return tokenizer, model, device
 
-    def score(self, query: str, documents: list[str]) -> list[float]:
+    def score(self, query: str, documents: list[str]) -> list[float | None]:
         if not documents or not self.settings.reranker_model_path:
-            return [0.0] * len(documents)
+            return [None] * len(documents)
         import torch
 
         tokenizer, model, device = self._load(

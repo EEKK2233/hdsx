@@ -39,6 +39,7 @@ from app.integrations.milvus import MilvusIndex
 from app.rag.service import KnowledgeService
 from app.services.agents import generate_assignment_materials, generate_lesson, generate_parent_report, generate_standard_answer, grade_subjective
 from app.services.documents import extract_text, read_upload
+from app.services.analytics import build_course_learning_analysis
 from app.tools.contracts import ToolContext
 from app.tools.registry import get_tool_registry
 
@@ -1154,10 +1155,51 @@ def read_notification(notification_id: int, db: Session = Depends(get_db), user:
 
 
 @router.get("/students/{student_id}/mastery", tags=["analytics"])
-def mastery(student_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def mastery(student_id: int, course_id: int | None = None, db: Session = Depends(get_db), user: User = Depends(current_user)):
     if user.role == "student" and user.id != student_id: raise PermissionDeniedError()
-    rows = list(db.scalars(select(MasterySnapshot).where(MasterySnapshot.student_id == student_id).order_by(MasterySnapshot.created_at.desc())))
+    stmt = select(MasterySnapshot).where(MasterySnapshot.student_id == student_id)
+    if course_id is not None:
+        if user.role in {"teacher", "admin"}: owned_course(db, course_id, user)
+        else: visible_course(db, course_id, user)
+        stmt = stmt.join(KnowledgePoint, KnowledgePoint.id == MasterySnapshot.knowledge_point_id).where(KnowledgePoint.course_id == course_id)
+    rows = list(db.scalars(stmt.order_by(MasterySnapshot.created_at.desc())))
     return [{"knowledge_point_id": x.knowledge_point_id, "score": x.score, "level": x.level, "evidence_count": x.evidence_count} for x in rows]
+
+
+@router.get("/students/{student_id}/course-analysis", tags=["analytics"])
+def student_course_analysis(student_id: int, course_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    if user.role == "student":
+        if user.id != student_id: raise PermissionDeniedError()
+        visible_course(db, course_id, user)
+    elif user.role in {"teacher", "admin"}:
+        owned_course(db, course_id, user)
+        if not db.scalar(select(CourseMember.id).where(
+            CourseMember.course_id == course_id, CourseMember.student_id == student_id,
+            CourseMember.status == "active",
+        )):
+            raise NotFoundError("课程学生")
+    else:
+        raise PermissionDeniedError()
+    assignments = list(db.scalars(select(Assignment).where(
+        Assignment.course_id == course_id, Assignment.status == Status.published,
+    ).order_by(Assignment.due_at, Assignment.id)))
+    assignment_ids = [item.id for item in assignments]
+    submissions = list(db.scalars(select(Submission).where(
+        Submission.student_id == student_id, Submission.assignment_id.in_(assignment_ids),
+    ))) if assignment_ids else []
+    qa_questions = db.scalar(select(func.count(QAMessage.id)).join(
+        QASession, QASession.id == QAMessage.session_id,
+    ).where(QASession.course_id == course_id, QASession.user_id == student_id, QAMessage.role == "user")) or 0
+    qa_attention = db.scalar(select(func.count(QAMessage.id)).join(
+        QASession, QASession.id == QAMessage.session_id,
+    ).where(
+        QASession.course_id == course_id, QASession.user_id == student_id,
+        QAMessage.role == "assistant",
+        (QAMessage.needs_teacher.is_(True)) | (QAMessage.confidence < .55),
+    )) or 0
+    return {"student_id": student_id, "course_id": course_id, **build_course_learning_analysis(
+        assignments, submissions, int(qa_questions), int(qa_attention),
+    )}
 
 
 @router.get("/students/{student_id}/weak-profile", tags=["analytics"])
