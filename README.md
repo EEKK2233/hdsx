@@ -14,6 +14,10 @@
 
 华迪实训小组项目。
 
+协作者可以在根目录 `plugins/<插件ID>/` 中独立增加受控 API 和页面，启用白名单由 `ENABLED_PLUGINS` 配置；完整开发、安全和测试说明见 [`plugins.md`](plugins.md)。插件页面会按角色动态加入左侧导航，普通插件的新增与升级不再需要修改核心路由源码。
+
+智能备课 Markdown 使用独立渲染预览页。生成完成或从历史点击预览时进入“工作台 > 智能备课 > 文件名”；只有从收藏页点击预览时，导航才显示“工作台 > 智能备课 > 收藏 > 文件名”。原始 Markdown 仍可直接下载。
+
 本目录是依据仓库根目录 `11.md` 与 `44.md` 实现的项目 MVP。后端采用 FastAPI + MySQL + Milvus，前端采用 Vue 3；本地模型使用 Ollama 的 `qwen2.5:latest` 与 `embeddinggemma:latest`。
 
 ## 环境
