@@ -7,7 +7,7 @@ from app.tools.contracts import ToolContext, ToolDefinition, ToolHandler
 from app.tools.knowledge import get_course_context, get_document_context, search_course_knowledge
 from app.tools.assignment import get_assignment_rubric
 from app.tools.analytics import get_student_mastery_summary
-from app.tools.web import preview_web_source
+from app.tools.web import preview_web_source, search_web_knowledge
 
 
 class ToolRegistry:
@@ -48,4 +48,5 @@ def get_tool_registry() -> ToolRegistry:
     registry.register(ToolDefinition(name="get_assignment_rubric", description="读取有权课程作业的题目、标准答案和评分点", input_schema={"type":"object","properties":{"assignment_id":{"type":"integer"}},"required":["assignment_id"]}), get_assignment_rubric)
     registry.register(ToolDefinition(name="get_student_mastery_summary", description="读取权限范围内学生的课程掌握度摘要", input_schema={"type":"object","properties":{"course_id":{"type":"integer"},"student_id":{"type":"integer"}},"required":["course_id","student_id"]}), get_student_mastery_summary)
     registry.register(ToolDefinition(name="preview_web_source", version="1.0.0", description="安全抓取网页正文并创建待用户确认的知识库草稿；不能直接入库", read_only=False, input_schema={"type":"object","properties":{"course_id":{"type":"integer"},"url":{"type":"string","format":"uri"}},"required":["course_id","url"]}), preview_web_source)
+    registry.register(ToolDefinition(name="search_web_knowledge", version="1.0.0", description="搜索并安全抓取少量公开学习网页，为课堂答疑提供只读补充证据", input_schema={"type":"object","properties":{"query":{"type":"string"},"max_articles":{"type":"integer","minimum":1,"maximum":2}},"required":["query"]}), search_web_knowledge)
     return registry

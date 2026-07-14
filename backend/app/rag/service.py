@@ -15,6 +15,7 @@ from app.rag.citation import build_citations
 from app.rag.context_builder import ContextBuilder
 from app.rag.pipeline import RetrievalPipeline
 from app.rag.retrieval.fusion import rrf_fusion
+from app.services.web_supplement import WebSupplementService
 
 
 class KnowledgeService:
@@ -147,12 +148,22 @@ class KnowledgeService:
     async def answer(self, course_id: int, query: str) -> RagAnswer:
         trace_id = uuid.uuid4().hex
         chunks = await self.hybrid_search(course_id, query, self.settings.rag_rerank_top_k)
-        if not chunks:
+        web = await WebSupplementService().collect(query) if len(chunks) < 2 else None
+        if not chunks and not (web and web.context):
             return RagAnswer(
                 answer="当前课程知识库中没有找到足够依据，请补充资料或转交教师。",
                 insufficient_evidence=True,
                 trace_id=trace_id,
             )
-        context = ContextBuilder().build(chunks)
-        result = await TutorAgent().run({"query": query, "context": context}, tools_used=["search_course_knowledge"])
-        return RagAnswer(answer=str(result.content), citations=build_citations(chunks), confidence=0.75, trace_id=result.meta.trace_id)
+        context_parts = [ContextBuilder().build(chunks)] if chunks else []
+        tools_used = ["search_course_knowledge"]
+        citations = build_citations(chunks)
+        if web and web.context:
+            context_parts.append(web.context)
+            citations.extend(web.citations)
+            tools_used.append("search_web_knowledge")
+        result = await TutorAgent().run(
+            {"query": query, "context": "\n\n".join(context_parts)}, tools_used=tools_used,
+        )
+        confidence = 0.75 if chunks and not web else (0.68 if chunks else 0.58)
+        return RagAnswer(answer=str(result.content), citations=citations, confidence=confidence, trace_id=result.meta.trace_id)

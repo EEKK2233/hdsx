@@ -1,4 +1,5 @@
 from app.services.web_imports import WebImportService
+from app.services.web_supplement import WebSupplementService
 from app.tools.contracts import ToolContext
 
 
@@ -10,3 +11,8 @@ async def preview_web_source(context: ToolContext, arguments: dict) -> dict:
         "content_preview": draft.content[:4000], "status": draft.status,
         "confirmation_required": True, "expires_at": draft.expires_at.isoformat(),
     }
+
+
+async def search_web_knowledge(context: ToolContext, arguments: dict) -> dict:
+    supplement = await WebSupplementService().collect(str(arguments["query"]), int(arguments.get("max_articles", 2)))
+    return {"context": supplement.context, "citations": supplement.citations}
